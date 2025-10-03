@@ -8,7 +8,9 @@ import UserDashboard from './pages/UserDashboard'
 import Chat from './pages/Chat'
 import UserManagement from './pages/UserManagement'
 import GroupManagement from './pages/GroupManagement'
+import GroupProfile from './pages/GroupProfile'
 import Profile from './pages/Profile'
+import Forward from './pages/Forward'
 import LoadingSpinner from './components/LoadingSpinner'
 
 function ProtectedRoute({ children, allowedRoles }) {
@@ -100,10 +102,26 @@ function AppRoutes() {
               } 
             />
             <Route 
+              path="/group/:groupId" 
+              element={
+                <ProtectedRoute>
+                  <GroupProfile />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
               path="/profile" 
               element={
                 <ProtectedRoute>
                   <Profile />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/forward" 
+              element={
+                <ProtectedRoute>
+                  <Forward />
                 </ProtectedRoute>
               } 
             />

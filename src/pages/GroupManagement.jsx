@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
-import { groupsAPI, usersAPI } from '../services/api'
+import { groupsAPI, usersAPI, API_ORIGIN } from '../services/api'
 import { toast } from 'react-hot-toast'
 import { 
   Plus, 
@@ -10,7 +10,10 @@ import {
   Users, 
   UserPlus,
   X,
-  Settings
+  Settings,
+  ArrowLeft,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react'
 
 const GroupManagement = () => {
@@ -26,6 +29,8 @@ const GroupManagement = () => {
     description: '',
     members: []
   })
+  const [avatarFile, setAvatarFile] = useState(null)
+  const [avatarPreview, setAvatarPreview] = useState(null)
 
   useEffect(() => {
     fetchData()
@@ -80,6 +85,7 @@ const GroupManagement = () => {
       console.log('Editing group:', editingGroup)
       console.log('Editing group ID:', editingGroup?.id)
       
+      let groupId
       if (editingGroup) {
         if (!editingGroup.id) {
           console.error('No group ID found for editing:', editingGroup)
@@ -87,16 +93,33 @@ const GroupManagement = () => {
           return
         }
         await groupsAPI.updateGroup(editingGroup.id, formData)
+        groupId = editingGroup.id
         toast.success('Group updated successfully')
       } else {
         const result = await groupsAPI.createGroup(formData)
         console.log('Group creation result:', result.data)
+        groupId = result.data.group._id || result.data.group.id
         toast.success('Group created successfully')
+      }
+
+      // Upload avatar if provided
+      if (avatarFile && groupId) {
+        try {
+          const formData = new FormData()
+          formData.append('avatar', avatarFile)
+          await groupsAPI.uploadGroupAvatar(groupId, formData)
+          toast.success('Group avatar uploaded successfully')
+        } catch (error) {
+          console.error('Avatar upload error:', error)
+          toast.error('Group created but avatar upload failed')
+        }
       }
       
       setShowModal(false)
       setEditingGroup(null)
       setFormData({ name: '', description: '', members: [] })
+      setAvatarFile(null)
+      setAvatarPreview(null)
       fetchData()
     } catch (error) {
       console.error('Group operation error:', error)
@@ -142,13 +165,27 @@ const GroupManagement = () => {
         role: member.role
       })) || []
     })
+    setAvatarFile(null)
+    setAvatarPreview(null)
     setShowModal(true)
   }
 
   const openCreateModal = () => {
     setEditingGroup(null)
     setFormData({ name: '', description: '', members: [] })
+    setAvatarFile(null)
+    setAvatarPreview(null)
     setShowModal(true)
+  }
+
+  const handleAvatarChange = (e) => {
+    const file = e.target.files[0]
+    if (file) {
+      setAvatarFile(file)
+      const reader = new FileReader()
+      reader.onload = (e) => setAvatarPreview(e.target.result)
+      reader.readAsDataURL(file)
+    }
   }
 
   const addMember = (userId) => {
@@ -199,9 +236,18 @@ const GroupManagement = () => {
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Group Management</h1>
-              <p className="text-gray-600">Create and manage groups for team communication</p>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => window.history.back()}
+                className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+                title="Go back"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Group Management</h1>
+                <p className="text-gray-600">Create and manage groups for team communication</p>
+              </div>
             </div>
             <button
               onClick={openCreateModal}
@@ -235,8 +281,18 @@ const GroupManagement = () => {
             <div key={group.id} className="card p-6">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center space-x-3">
-                  <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                    <Users className="w-6 h-6 text-green-600" />
+                  <div className="w-12 h-12 rounded-lg flex items-center justify-center overflow-hidden">
+                    {group.avatar ? (
+                      <img
+                        src={`${API_ORIGIN}${group.avatar}`}
+                        alt="Group avatar"
+                        className="w-12 h-12 rounded-lg object-cover"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                        <Users className="w-6 h-6 text-green-600" />
+                      </div>
+                    )}
                   </div>
                   <div>
                     <h3 className="font-medium text-gray-900">{group.name}</h3>
@@ -336,6 +392,46 @@ const GroupManagement = () => {
                   rows="3"
                   placeholder="Enter group description (optional)"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Group Avatar
+                </label>
+                <div className="flex items-center space-x-4">
+                  <div className="flex-shrink-0">
+                    {avatarPreview ? (
+                      <img
+                        src={avatarPreview}
+                        alt="Avatar preview"
+                        className="w-16 h-16 rounded-lg object-cover border-2 border-gray-200"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-lg bg-gray-100 border-2 border-gray-200 flex items-center justify-center">
+                        <ImageIcon className="w-6 h-6 text-gray-400" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleAvatarChange}
+                      className="hidden"
+                      id="avatar-upload"
+                    />
+                    <label
+                      htmlFor="avatar-upload"
+                      className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer transition-colors"
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      {avatarFile ? 'Change Avatar' : 'Upload Avatar'}
+                    </label>
+                    <p className="text-xs text-gray-500 mt-1">
+                      PNG, JPG, GIF up to 5MB
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <div>

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
+import { config } from '../config';
 import { toast } from 'react-hot-toast';
 
 const SocketContext = createContext();
@@ -101,7 +102,7 @@ export const SocketProvider = ({ children, user }) => {
   useEffect(() => {
     if (user && user.id) {
       console.log('🔌 Initializing socket connection for user:', user.name);
-      console.log('🔗 Socket URL:', import.meta.env.VITE_SOCKET_URL || "http://localhost:5000");
+      console.log('🔗 Socket URL:', (import.meta.env.VITE_SOCKET_URL || config.SOCKET_URL));
       
       // Close any existing connection first
       if (socket) {
@@ -110,7 +111,11 @@ export const SocketProvider = ({ children, user }) => {
         setSocket(null);
       }
       
-      const newSocket = io(import.meta.env.VITE_SOCKET_URL || "http://localhost:5000", socketOptions);
+      const token = localStorage.getItem('token');
+      const newSocket = io((import.meta.env.VITE_SOCKET_URL || config.SOCKET_URL), {
+        ...socketOptions,
+        auth: { token }
+      });
 
       // Connection successful
       newSocket.on('connect', () => {
@@ -126,6 +131,7 @@ export const SocketProvider = ({ children, user }) => {
         console.log(`🏠 User ${user.id} joined personal room`);
         
         startPingMonitoring(newSocket);
+        startHeartbeat(newSocket);
       });
 
       newSocket.on('disconnect', (reason) => {
@@ -133,6 +139,7 @@ export const SocketProvider = ({ children, user }) => {
         console.log('❌ Socket disconnected - Reason:', reason);
         console.log('👤 Disconnected user:', user.name);
         stopPingMonitoring();
+        stopHeartbeat();
         startReconnection(newSocket);
       });
 
@@ -260,6 +267,7 @@ export const SocketProvider = ({ children, user }) => {
       return () => {
         console.log('🧹 Cleaning up socket connection');
         stopPingMonitoring();
+        stopHeartbeat();
         newSocket.close();
         setSocket(null);
         setIsConnected(false);
@@ -296,6 +304,7 @@ export const SocketProvider = ({ children, user }) => {
 
   // Enhanced ping monitoring system
   let pingInterval;
+  let heartbeatInterval;
   
   const startPingMonitoring = (newSocket) => {
     if (pingInterval) {
@@ -339,6 +348,25 @@ export const SocketProvider = ({ children, user }) => {
     if (pingInterval) {
       clearInterval(pingInterval);
       pingInterval = null;
+    }
+  };
+
+  // Lightweight 2s heartbeat to keep the socket hot and responsive
+  const startHeartbeat = (newSocket) => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+    }
+    heartbeatInterval = setInterval(() => {
+      if (newSocket && newSocket.connected) {
+        newSocket.emit('client-heartbeat', { t: Date.now() });
+      }
+    }, 2000);
+  };
+
+  const stopHeartbeat = () => {
+    if (heartbeatInterval) {
+      clearInterval(heartbeatInterval);
+      heartbeatInterval = null;
     }
   };
 

@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  import.meta.env.VITE_API_URL || "http://13.204.195.88:5002/api";
 // Derived origin for building absolute asset URLs
 export const API_ORIGIN = API_BASE_URL.replace(/\/?api\/?$/, "");
 
@@ -90,20 +90,61 @@ export const groupsAPI = {
     api.delete(`/groups/${groupId}/members/${memberId}`),
   updateGroup: (groupId, groupData) => api.put(`/groups/${groupId}`, groupData),
   deleteGroup: (groupId) => api.delete(`/groups/${groupId}`),
+  uploadGroupAvatar: (groupId, formData) =>
+    api.post(`/groups/${groupId}/avatar`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    }),
 };
 
 // Messages API
 export const messagesAPI = {
   getPersonalMessages: (userId) => api.get(`/messages/personal/${userId}`),
   getGroupMessages: (groupId) => api.get(`/messages/group/${groupId}`),
-  sendPersonalMessage: (messageData) =>
-    api.post("/messages/personal", messageData),
-  sendGroupMessage: (messageData) => api.post("/messages/group", messageData),
+  sendPersonalMessage: (messageData) => {
+    // Check if it's FormData (file upload) or regular object
+    if (messageData instanceof FormData) {
+      return api.post("/messages/personal", messageData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+    }
+    return api.post("/messages/personal", messageData);
+  },
+  sendGroupMessage: (messageData) => {
+    // Check if it's FormData (file upload) or regular object
+    if (messageData instanceof FormData) {
+      return api.post("/messages/group", messageData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+    }
+    return api.post("/messages/group", messageData);
+  },
   markAsRead: (messageId) => api.put(`/messages/${messageId}/read`),
   getUnreadCount: () => api.get("/messages/unread/count"),
   getChatState: () => api.get("/messages/chat-state"),
   updateChatState: (chatStateData) =>
     api.post("/messages/chat-state", chatStateData),
+  forwardMessage: (payload) => api.post("/messages/forward", payload),
+  editMessage: (messageId, message) =>
+    api.put(`/messages/${messageId}`, { message }),
+};
+
+// Calls API
+export const callsAPI = {
+  getHistory: (params = {}) => api.get(`/calls/history`, { params }),
+  initiate: (receiverId, callType = "voice", offer = null) =>
+    api.post(`/calls/initiate`, { receiverId, callType, offer }),
+  answer: (callId, answer) => api.put(`/calls/${callId}/answer`, { answer }),
+  decline: (callId) => api.put(`/calls/${callId}/decline`),
+  end: (callId) => api.put(`/calls/${callId}/end`),
+  addIceCandidate: (callId, candidate, sdpMLineIndex, sdpMid) =>
+    api.post(`/calls/${callId}/ice-candidate`, {
+      candidate,
+      sdpMLineIndex,
+      sdpMid,
+    }),
+  getDetails: (callId) => api.get(`/calls/${callId}`),
+  updateNotes: (callId, notes) => api.put(`/calls/${callId}/notes`, { notes }),
+  delete: (callId) => api.delete(`/calls/${callId}`),
 };
 
 export default api;

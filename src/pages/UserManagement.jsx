@@ -20,7 +20,12 @@ import {
   XCircle,
   ToggleLeft,
   ToggleRight,
-  Power
+  Power,
+  ArrowLeft,
+  LayoutGrid,
+  List as ListIcon,
+  Eye,
+  EyeOff
 } from 'lucide-react'
 
 const UserManagement = () => {
@@ -40,6 +45,46 @@ const UserManagement = () => {
     bio: '',
     isActive: true
   })
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+
+  // View and selection state
+  const [viewMode, setViewMode] = useState('list') // 'grid' | 'list'
+  const [selectedUserIds, setSelectedUserIds] = useState(new Set())
+
+  const isSelected = (id) => selectedUserIds.has(id)
+  const toggleSelect = (id) => {
+    setSelectedUserIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const clearSelection = () => setSelectedUserIds(new Set())
+  const selectAllFiltered = () => setSelectedUserIds(new Set(filteredUsers.map(u => u.id)))
+
+  const handleBulkSetActive = async (shouldBeActive) => {
+    if (selectedUserIds.size === 0) return
+    const confirmText = shouldBeActive ? 'enable' : 'disable'
+    if (!window.confirm(`Are you sure you want to ${confirmText} ${selectedUserIds.size} selected user(s)?`)) return
+    try {
+      // Toggle only those which need change
+      const idToUser = new Map(users.map(u => [u.id, u]))
+      for (const id of selectedUserIds) {
+        const u = idToUser.get(id)
+        if (!u) continue
+        if ((u.isActive ?? true) !== shouldBeActive) {
+          await usersAPI.toggleUserStatus(id)
+        }
+      }
+      toast.success(`Selected users ${confirmText}d`)
+      clearSelection()
+      fetchUsers()
+    } catch (e) {
+      console.error('Bulk toggle error', e)
+      toast.error('Failed bulk update')
+    }
+  }
 
   useEffect(() => {
     fetchUsers()
@@ -159,13 +204,15 @@ const UserManagement = () => {
     setFormData({
       name: userData.name || '',
       email: userData.email || '',
-      password: '', // Don't pre-fill password for security
+      password: '', // do not prefill new password with current password
       role: userData.role || 'user',
       phone: userData.phone || '',
       designation: userData.designation || '',
       bio: userData.bio || '',
       isActive: userData.isActive !== false // Default to true if not false
     })
+    setCurrentPassword(userData.password || '') // Store current password for display
+    setShowCurrentPassword(false)
     setShowModal(true)
   }
 
@@ -181,6 +228,7 @@ const UserManagement = () => {
       bio: '',
       isActive: true
     })
+    setCurrentPassword('') // Clear current password for new user
     setShowModal(true)
   }
 
@@ -227,24 +275,50 @@ const UserManagement = () => {
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
-              <p className="text-gray-600">
-                {user.role === 'superadmin' 
-                  ? 'Manage admins and users in the system'
-                  : 'Manage users in your organization'
-                }
-              </p>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => window.history.back()}
+                className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+                title="Go back"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">User Management</h1>
+                <p className="text-gray-600">
+                  {user.role === 'superadmin' 
+                    ? 'Manage admins and users in the system'
+                    : 'Manage users in your organization'
+                  }
+                </p>
+              </div>
             </div>
-            {user.role === 'superadmin' && (
+            <div className="flex items-center gap-3">
+              {/* View toggle */}
+              <div className="flex items-center rounded-md border border-gray-300 overflow-hidden">
+                <button
+                  className={`px-3 py-2 text-sm ${viewMode==='grid' ? 'bg-gray-200 text-gray-900' : 'bg-white text-gray-600'}`}
+                  onClick={() => setViewMode('grid')}
+                  title="Grid view"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  className={`px-3 py-2 text-sm ${viewMode==='list' ? 'bg-gray-200 text-gray-900' : 'bg-white text-gray-600'}`}
+                  onClick={() => setViewMode('list')}
+                  title="List view"
+                >
+                  <ListIcon className="w-4 h-4" />
+                </button>
+              </div>
               <button
                 onClick={openCreateModal}
                 className="btn-primary inline-flex items-center"
               >
-                <Plus className="w-4 h-4 mr-2" />
-                Create Admin
+                <UserPlus className="w-4 h-4 mr-2" />
+                Add New User
               </button>
-            )}
+            </div>
           </div>
         </div>
       </div>
@@ -264,10 +338,30 @@ const UserManagement = () => {
           </div>
         </div>
 
-        {/* Users Grid */}
+        {/* Bulk selection bar */}
+        {selectedUserIds.size > 0 && (
+          <div className="card p-4 mb-4 flex items-center justify-between">
+            <div className="text-sm text-gray-700">
+              Selected {selectedUserIds.size} user(s)
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={selectAllFiltered} className="btn-secondary">Select all</button>
+              <button onClick={clearSelection} className="btn-secondary">Clear</button>
+              <button onClick={() => handleBulkSetActive(true)} className="btn-primary">Enable selected</button>
+              <button onClick={() => handleBulkSetActive(false)} className="btn-secondary text-red-700">Disable selected</button>
+            </div>
+          </div>
+        )}
+
+        {/* Users - Grid or List */}
+        {viewMode === 'grid' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredUsers.map((userData) => (
-            <div key={userData.id} className={`card p-6 transition-all ${!userData.isActive ? 'bg-gray-50 border-gray-300 opacity-75' : 'hover:shadow-lg'}`}>
+            <div key={userData.id} className={`relative card p-6 transition-all ${!userData.isActive ? 'bg-gray-50 border-gray-300 opacity-75' : 'hover:shadow-lg'}`}>
+              {/* Selection checkbox */}
+              <label className="absolute top-3 left-3 inline-flex items-center gap-2 bg-white/80 px-2 py-1 rounded shadow">
+                <input type="checkbox" checked={isSelected(userData.id)} onChange={() => toggleSelect(userData.id)} />
+              </label>
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center space-x-3">
                   <div className={`w-12 h-12 ${userData.isActive ? 'bg-primary-100' : 'bg-gray-100'} rounded-lg flex items-center justify-center overflow-hidden`}>
@@ -396,6 +490,76 @@ const UserManagement = () => {
             </div>
           ))}
         </div>
+        ) : (
+        <div className="card p-0 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <input type="checkbox" onChange={(e)=> e.target.checked ? selectAllFiltered() : clearSelection()} checked={selectedUserIds.size>0 && selectedUserIds.size===filteredUsers.length} />
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {filteredUsers.map(u => (
+                  <tr key={u.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <input type="checkbox" checked={isSelected(u.id)} onChange={()=>toggleSelect(u.id)} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded bg-gray-100 overflow-hidden flex items-center justify-center">
+                          {u.profileImage ? (
+                            <img src={`${API_ORIGIN}${u.profileImage}`} alt="Profile" className="w-10 h-10 object-cover" />
+                          ) : (
+                            <UserIcon className="w-5 h-5 text-gray-400" />
+                          )}
+                        </div>
+                        <div>
+                          <div className={`font-medium ${u.isActive ? 'text-gray-900' : 'text-gray-600'}`}>{u.name}</div>
+                          <div className="text-xs text-gray-500">{u.designation || '—'}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getRoleColor(u.role)}`}>{u.role}</span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-700">{u.email}</td>
+                    <td className="px-4 py-3 text-sm text-gray-700">{u.phone || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium px-2 py-1 rounded-full ${u.isActive ? 'text-green-700 bg-green-100' : 'text-red-700 bg-red-100'}`}>{u.isActive ? 'Active' : 'Disabled'}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {u.id !== user?.id && (u.role !== 'superadmin' || user?.role === 'superadmin') && (
+                          <button className="text-gray-600 hover:text-gray-900" title="Toggle status" onClick={()=>handleToggleUserStatus(u.id, u.isActive)}>
+                            {u.isActive ? <ToggleRight className="w-5 h-5 text-green-600"/> : <ToggleLeft className="w-5 h-5 text-gray-400"/>}
+                          </button>
+                        )}
+                        <button className="text-primary-600 hover:text-primary-900" title="Edit" onClick={()=>handleEdit(u)}>
+                          <Edit className="w-4 h-4"/>
+                        </button>
+                        {u.role !== 'superadmin' && u.id !== user?.id && (
+                          <button className="text-red-600 hover:text-red-900" title="Delete" onClick={()=>handleDelete(u.id)}>
+                            <Trash2 className="w-4 h-4"/>
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        )}
 
         {filteredUsers.length === 0 && (
           <div className="text-center py-12">
@@ -413,7 +577,7 @@ const UserManagement = () => {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg max-w-2xl w-full p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-medium text-gray-900 mb-4">
-              {editingUser ? 'Edit User' : 'Create Admin'}
+              {editingUser ? 'Edit User' : 'Create New User'}
             </h3>
             
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -448,7 +612,8 @@ const UserManagement = () => {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Password {editingUser && '(leave blank to keep current)'}
+                    {editingUser ? 'New Password' : 'Password'}
+                    {editingUser && <span className="text-gray-500 text-xs ml-1">(leave blank to keep current)</span>}
                   </label>
                   <input
                     type="password"
@@ -458,6 +623,24 @@ const UserManagement = () => {
                     className="input-field"
                     placeholder={editingUser ? 'Enter new password (optional)' : 'Enter password'}
                   />
+                  {/* Always show current password when editing */}
+                  {editingUser && (
+                    <div className="mt-2 p-2 bg-gray-50 rounded border">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-medium text-gray-600">Current Password</label>
+                        <button type="button" className="text-xs text-primary-600 hover:text-primary-800 inline-flex items-center gap-1" onClick={()=>setShowCurrentPassword(v=>!v)}>
+                          {showCurrentPassword ? <EyeOff className="w-3 h-3"/> : <Eye className="w-3 h-3"/>}
+                          {showCurrentPassword ? 'Hide' : 'Show'}
+                        </button>
+                      </div>
+                      <input
+                        type={showCurrentPassword ? 'text' : 'password'}
+                        readOnly
+                        value={currentPassword || '[Password not available - please set new password]'}
+                        className="w-full input-field font-mono"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -470,7 +653,6 @@ const UserManagement = () => {
                     className="input-field"
                   >
                     <option value="user">User</option>
-                    <option value="admin">Admin</option>
                     {user.role === 'superadmin' && (
                       <option value="admin">Admin</option>
                     )}

@@ -15,20 +15,23 @@ import {
   MessageCircle,
   Bell,
   X,
-  Check
+  Check,
+  LogOut
 } from 'lucide-react'
 import { useSocket } from '../contexts/SocketProvider'
 
 const Dashboard = () => {
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const { notifications, handleActivateUser, handleCloseNotification } = useSocket()
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalGroups: 0,
-    unreadMessages: 0
+    activeUsers: 0,
+    disabledUsers: 0
   })
   const [loading, setLoading] = useState(true)
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
+  const [showAccountMenu, setShowAccountMenu] = useState(false)
 
   useEffect(() => {
     fetchDashboardData()
@@ -54,20 +57,44 @@ const Dashboard = () => {
     };
   }, [showNotificationPanel])
 
+  // Close account menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (showAccountMenu) {
+        const menu = document.querySelector('.account-menu-container')
+        if (menu && !menu.contains(event.target)) {
+          setShowAccountMenu(false)
+        }
+      }
+    }
+
+    if (showAccountMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showAccountMenu])
+
   const fetchDashboardData = async () => {
     try {
       setLoading(true)
       
-      const [usersRes, groupsRes, unreadRes] = await Promise.all([
+      const [usersRes, groupsRes] = await Promise.all([
         user.role === 'user' ? usersAPI.getActiveUsers() : usersAPI.getUsers(),
-        groupsAPI.getMyGroups(),
-        messagesAPI.getUnreadCount()
+        groupsAPI.getMyGroups()
       ])
 
+      const allUsers = Array.isArray(usersRes.data) ? usersRes.data : []
+      const activeUsers = allUsers.filter(u => (u.isActive ?? true) === true).length
+      const disabledUsers = allUsers.filter(u => (u.isActive ?? true) === false).length
+
       setStats({
-        totalUsers: usersRes.data.length,
+        totalUsers: allUsers.length,
         totalGroups: groupsRes.data.length,
-        unreadMessages: unreadRes.data.unreadCount
+        activeUsers,
+        disabledUsers
       })
     } catch (error) {
       toast.error('Failed to load dashboard data')
@@ -151,11 +178,32 @@ const Dashboard = () => {
                 </div>
               )}
               
-              <div className={`px-3 py-1 rounded-full text-sm font-medium ${getRoleColor(user.role)}`}>
-                <div className="flex items-center space-x-1">
-                  {getRoleIcon(user.role)}
-                  <span className="capitalize">{user.role}</span>
-                </div>
+              <div className="relative account-menu-container">
+                <button
+                  onClick={() => setShowAccountMenu((v) => !v)}
+                  className={`px-3 py-1 rounded-full text-sm font-medium hover:opacity-90 transition ${getRoleColor(user.role)}`}
+                >
+                  <div className="flex items-center space-x-1">
+                    {getRoleIcon(user.role)}
+                    <span className="capitalize">{user.role}</span>
+                  </div>
+                </button>
+
+                {showAccountMenu && (
+                  <div className="absolute right-0 mt-2 w-44 bg-white border border-gray-200 rounded-md shadow-lg z-20">
+                    <button
+                      onClick={() => {
+                        setShowAccountMenu(false)
+                        logout()
+                        toast.success('Logged out successfully')
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -245,7 +293,7 @@ const Dashboard = () => {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="card p-6">
             <div className="flex items-center">
               <div className="p-3 rounded-full bg-blue-100">
@@ -272,12 +320,24 @@ const Dashboard = () => {
 
           <div className="card p-6">
             <div className="flex items-center">
-              <div className="p-3 rounded-full bg-red-100">
-                <MessageCircle className="w-6 h-6 text-red-600" />
+              <div className="p-3 rounded-full bg-green-100">
+                <Users className="w-6 h-6 text-green-600" />
               </div>
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Unread Messages</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.unreadMessages}</p>
+                <p className="text-sm font-medium text-gray-600">Active Users</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.activeUsers}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card p-6">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-red-100">
+                <Users className="w-6 h-6 text-red-600" />
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Disabled Users</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.disabledUsers}</p>
               </div>
             </div>
           </div>

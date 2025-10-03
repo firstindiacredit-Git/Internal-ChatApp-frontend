@@ -1,4 +1,5 @@
 import { io } from "socket.io-client";
+import { config } from "../config";
 
 class SocketService {
   constructor() {
@@ -31,20 +32,19 @@ class SocketService {
       this.socket = null;
     }
 
-    this.socket = io(
-      import.meta.env.VITE_SOCKET_URL || "http://localhost:5000",
-      {
-        autoConnect: true,
-        reconnection: true,
-        reconnectionDelay: this.reconnectDelay,
-        reconnectionAttempts: this.maxReconnectAttempts,
-        maxReconnectionAttempts: this.maxReconnectAttempts,
-        timeout: 20000,
-        forceNew: true,
-        multiplex: false,
-        transports: ["websocket", "polling"],
-      }
-    );
+    const token = localStorage.getItem("token");
+    this.socket = io(import.meta.env.VITE_SOCKET_URL || config.SOCKET_URL, {
+      autoConnect: true,
+      reconnection: true,
+      reconnectionDelay: this.reconnectDelay,
+      reconnectionAttempts: this.maxReconnectAttempts,
+      maxReconnectionAttempts: this.maxReconnectAttempts,
+      timeout: 20000,
+      forceNew: true,
+      multiplex: false,
+      transports: ["websocket", "polling"],
+      auth: { token },
+    });
 
     this.setupEventHandlers();
     this.isConnecting = false;

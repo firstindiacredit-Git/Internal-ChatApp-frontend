@@ -14,6 +14,9 @@ const WebRTCAudioCall = ({
   const [isMuted, setIsMuted] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
   const [error, setError] = useState(null);
+  const [position, setPosition] = useState({ x: window.innerWidth - 350, y: 20 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   
   const localAudioRef = useRef(null);
   const remoteAudioRef = useRef(null);
@@ -132,6 +135,46 @@ const WebRTCAudioCall = ({
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Drag and drop functionality
+  const handleMouseDown = (e) => {
+    setIsDragging(true);
+    const rect = e.currentTarget.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top
+    });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isDragging) return;
+    const newX = e.clientX - dragOffset.x;
+    const newY = e.clientY - dragOffset.y;
+    
+    // Keep within viewport bounds
+    const maxX = window.innerWidth - 320;
+    const maxY = window.innerHeight - 200;
+    
+    setPosition({
+      x: Math.max(0, Math.min(newX, maxX)),
+      y: Math.max(0, Math.min(newY, maxY))
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, dragOffset]);
 
   const handleAnswer = async () => {
     const initialized = await initializeWebRTC();
@@ -296,37 +339,59 @@ const WebRTCAudioCall = ({
 
   if (isIncoming && callStatus === 'incoming') {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-90 flex flex-col items-center justify-center z-50">
-        <div className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl">
-          <div className="mb-6">
+      <div 
+        className="fixed z-50"
+        style={{
+          left: position.x,
+          top: position.y,
+        }}
+      >
+        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 w-80 text-center shadow-2xl border border-gray-700 relative">
+          {/* Drag Handle Button */}
+          <div className="absolute top-2 right-2">
+            <button
+              onMouseDown={handleMouseDown}
+              className="p-2 hover:bg-white hover:bg-opacity-20 rounded-full transition-colors cursor-move"
+              title="Drag to move call window"
+            >
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16M8 4v16M16 4v16" />
+              </svg>
+            </button>
+          </div>
+          <div className="mb-4">
             {callData?.caller?.avatar ? (
               <img 
                 src={callData.caller.avatar} 
                 alt={callData.caller.name}
-                className="w-24 h-24 rounded-full mx-auto object-cover"
+                className="w-16 h-16 rounded-full mx-auto object-cover border-2 border-white"
               />
             ) : (
-              <div className="w-24 h-24 rounded-full mx-auto bg-green-500 text-white flex items-center justify-center text-2xl font-bold">
+              <div className="w-16 h-16 rounded-full mx-auto bg-green-500 text-white flex items-center justify-center text-lg font-bold border-2 border-white">
                 {callData?.caller?.name?.charAt(0) || 'U'}
               </div>
             )}
           </div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+          <h2 className="text-lg font-semibold text-white mb-2">
             {callData?.caller?.name || 'Unknown'}
           </h2>
-          <p className="text-gray-600 mb-8">📞 Incoming voice call...</p>
-          <div className="flex justify-center gap-6">
+          <p className="text-gray-300 mb-6 text-sm">📞 Incoming voice call...</p>
+          <div className="flex justify-center gap-4">
             <button 
               onClick={handleDecline}
-              className="w-16 h-16 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-2xl transition-colors shadow-lg"
+              className="w-12 h-12 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-all duration-200 shadow-lg hover:shadow-xl"
             >
-              📞❌
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
             <button 
               onClick={handleAnswer}
-              className="w-16 h-16 bg-green-500 hover:bg-green-600 text-white rounded-full flex items-center justify-center text-2xl transition-colors shadow-lg"
+              className="w-12 h-12 bg-green-500 hover:bg-green-600 text-white rounded-full flex items-center justify-center transition-all duration-200 shadow-lg hover:shadow-xl"
             >
-              📞✅
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+              </svg>
             </button>
           </div>
         </div>
@@ -336,14 +401,32 @@ const WebRTCAudioCall = ({
 
   if (error) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50">
-        <div className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center">
-          <div className="text-6xl mb-4">❌</div>
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">Call Error</h3>
-          <p className="text-gray-600 mb-6">{error}</p>
+      <div 
+        className="fixed z-50"
+        style={{
+          left: position.x,
+          top: position.y,
+        }}
+      >
+        <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl p-6 w-80 text-center shadow-2xl border border-gray-700 relative">
+          {/* Drag Handle Button */}
+          <div className="absolute top-2 right-2">
+            <button
+              onMouseDown={handleMouseDown}
+              className="p-2 hover:bg-white hover:bg-opacity-20 rounded-full transition-colors cursor-move"
+              title="Drag to move call window"
+            >
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16M8 4v16M16 4v16" />
+              </svg>
+            </button>
+          </div>
+          <div className="text-4xl mb-3">❌</div>
+          <h3 className="text-lg font-semibold text-white mb-2">Call Error</h3>
+          <p className="text-gray-300 mb-4 text-sm">{error}</p>
           <button 
             onClick={handleCallEnd}
-            className="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded-lg transition-colors"
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg transition-colors text-sm"
           >
             Close
           </button>
@@ -353,91 +436,132 @@ const WebRTCAudioCall = ({
   }
 
   return (
-    <div className="fixed inset-0 bg-gradient-to-br from-green-400 to-green-600 flex flex-col items-center justify-center z-50 text-white">
-      <audio ref={localAudioRef} muted autoPlay />
-      <audio ref={remoteAudioRef} autoPlay />
-      <div className="text-center mb-8">
-        <h2 className="text-sm text-green-100 mb-2">
+    <div 
+      className="fixed z-50"
+      style={{
+        left: position.x,
+        top: position.y,
+      }}
+    >
+      <div className="bg-gradient-to-br from-gray-900 to-gray-800 rounded-2xl shadow-2xl border border-gray-700 p-6 w-80 text-center text-white relative">
+        {/* Drag Handle Button */}
+        <div className="absolute top-2 right-2">
+          <button
+            onMouseDown={handleMouseDown}
+            className="p-2 hover:bg-white hover:bg-opacity-20 rounded-full transition-colors cursor-move"
+            title="Drag to move call window"
+          >
+            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16M8 4v16M16 4v16" />
+            </svg>
+          </button>
+        </div>
+        <audio ref={localAudioRef} muted autoPlay />
+        <audio ref={remoteAudioRef} autoPlay />
+        
+        {/* Header */}
+      <div className="text-center mb-6">
+        <h2 className="text-sm text-gray-300 mb-2">
           {callStatus === 'connecting' ? 'Connecting...' : 
            callStatus === 'connected' ? 'Voice Call' : 
            callStatus === 'outgoing' ? 'Calling...' : 'Call'}
         </h2>
-        <h1 className="text-2xl font-semibold">
+        <h1 className="text-lg font-semibold">
           {callData?.otherUser?.name || callData?.caller?.name || 'Unknown'}
         </h1>
         {callStatus === 'connected' && (
-          <p className="text-green-100 mt-2">
+          <p className="text-gray-300 mt-1 text-sm">
             {formatDuration(callDuration)}
           </p>
         )}
       </div>
-      <div className="mb-12">
+      
+      {/* Avatar */}
+      <div className="mb-6">
         {(callData?.otherUser?.avatar || callData?.caller?.avatar) ? (
           <img 
             src={callData?.otherUser?.avatar || callData?.caller?.avatar}
             alt={callData?.otherUser?.name || callData?.caller?.name}
-            className="w-32 h-32 rounded-full object-cover shadow-2xl"
+            className="w-20 h-20 rounded-full object-cover shadow-2xl border-2 border-white mx-auto"
           />
         ) : (
-          <div className="w-32 h-32 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-4xl font-bold shadow-2xl">
+          <div className="w-20 h-20 rounded-full bg-green-500 flex items-center justify-center text-2xl font-bold shadow-2xl border-2 border-white mx-auto">
             {(callData?.otherUser?.name || callData?.caller?.name)?.charAt(0) || 'U'}
           </div>
         )}
       </div>
-      <div className="mb-8 text-center">
+      
+      {/* Status */}
+      <div className="mb-4 text-center">
         {callStatus === 'outgoing' && (
           <div className="flex items-center justify-center gap-2">
             <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-            <span className="text-green-100">Calling...</span>
+            <span className="text-gray-300 text-sm">Calling...</span>
           </div>
         )}
         {callStatus === 'connecting' && (
           <div className="flex items-center justify-center gap-2">
             <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
-            <span className="text-green-100">Connecting...</span>
+            <span className="text-gray-300 text-sm">Connecting...</span>
           </div>
         )}
         {callStatus === 'connected' && (
           <div className="flex items-center justify-center gap-2">
-            <div className="w-2 h-2 bg-green-300 rounded-full"></div>
-            <span className="text-green-100">Connected</span>
+            <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+            <span className="text-gray-300 text-sm">Connected</span>
           </div>
         )}
       </div>
-      <div className="flex gap-6">
+      
+      {/* Controls */}
+      <div className="flex gap-4 justify-center">
         {callStatus === 'connected' && (
           <button
             onClick={toggleMute}
-            className={`w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all shadow-lg ${
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 shadow-lg hover:shadow-xl ${
               isMuted 
                 ? 'bg-red-500 hover:bg-red-600' 
                 : 'bg-white bg-opacity-20 hover:bg-opacity-30'
             }`}
             title={isMuted ? 'Unmute' : 'Mute'}
           >
-            {isMuted ? '🔇' : '🎤'}
+            {isMuted ? (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+              </svg>
+            ) : (
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            )}
           </button>
         )}
         <button 
           onClick={handleCallEnd}
-          className="w-16 h-16 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center text-2xl transition-colors shadow-lg"
+          className="w-12 h-12 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-all duration-200 shadow-lg hover:shadow-xl"
           title="End Call"
         >
-          📞❌
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
       </div>
+      
+      {/* Audio Quality Indicator */}
       {callStatus === 'connected' && (
-        <div className="mt-8 text-center">
+        <div className="mt-4 text-center">
           <div className="flex items-center justify-center gap-1">
-            <div className="w-1 h-2 bg-green-300 rounded"></div>
-            <div className="w-1 h-3 bg-green-300 rounded"></div>
-            <div className="w-1 h-4 bg-green-300 rounded"></div>
-            <div className="w-1 h-3 bg-green-300 rounded"></div>
-            <div className="w-1 h-2 bg-green-300 rounded"></div>
+            <div className="w-1 h-2 bg-green-400 rounded"></div>
+            <div className="w-1 h-3 bg-green-400 rounded"></div>
+            <div className="w-1 h-4 bg-green-400 rounded"></div>
+            <div className="w-1 h-3 bg-green-400 rounded"></div>
+            <div className="w-1 h-2 bg-green-400 rounded"></div>
           </div>
-          <span className="text-xs text-green-100 mt-1 block">Good quality</span>
+          <span className="text-xs text-gray-300 mt-1 block">Good quality</span>
         </div>
       )}
+      </div>
     </div>
   );
 };

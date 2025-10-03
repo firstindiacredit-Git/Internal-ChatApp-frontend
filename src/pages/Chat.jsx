@@ -18,8 +18,8 @@ import {
   File,
   Download
 } from 'lucide-react'
-import WebRTCAudioCall from '../components/WebRTCAudioCall'
-import WebRTCCall from '../components/WebRTCCall'
+import WebRTCCall from '../components/WebRTCCall';
+import WebRTCAudioCall from '../components/WebRTCAudioCall';
 import { callsAPI } from '../services/api'
 
 const Chat = () => {
@@ -1703,25 +1703,27 @@ const Chat = () => {
 
                 {/* Conditional Call UI Modals */}
                 {showCallUI && callData && (
-                  callData.callType === 'voice' ? (
-                    <WebRTCAudioCall 
-                      user={user}
-                      callData={callData}
-                      isIncoming={isIncomingCall}
-                      onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
-                      onCallAnswer={() => {}}
-                      onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
-                    />
-                  ) : (
-                    <WebRTCCall
-                      user={user}
-                      callData={callData}
-                      isIncoming={isIncomingCall}
-                      onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
-                      onCallAnswer={() => {}}
-                      onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
-                    />
-                  )
+                  <>
+                    {callData.callType === 'video' ? (
+                      <WebRTCCall
+                        user={user}
+                        callData={callData}
+                        isIncoming={isIncomingCall}
+                        onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
+                        onCallAnswer={() => {}}
+                        onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
+                      />
+                    ) : (
+                      <WebRTCAudioCall
+                        user={user}
+                        callData={callData}
+                        isIncoming={isIncomingCall}
+                        onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
+                        onCallAnswer={() => {}}
+                        onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
+                      />
+                    )}
+                  </>
                 )}
 
                 {/* File Preview */}

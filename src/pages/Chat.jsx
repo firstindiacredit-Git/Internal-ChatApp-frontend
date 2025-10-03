@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket } from '../contexts/SocketProvider'
 import { usersAPI, groupsAPI, messagesAPI, API_ORIGIN } from '../services/api'
@@ -45,6 +45,7 @@ const Chat = () => {
   const [loading, setLoading] = useState(true)
   const [unreadCounts, setUnreadCounts] = useState({})
   const [lastMessages, setLastMessages] = useState({})
+  const [activeFilter, setActiveFilter] = useState('all') // 'all', 'unread', 'groups'
   const [selectedFile, setSelectedFile] = useState(null)
   const [filePreview, setFilePreview] = useState(null)
   const [showFileOptions, setShowFileOptions] = useState(false)
@@ -66,6 +67,68 @@ const Chat = () => {
   const resolveUrl = (url) => {
     if (!url) return url
     return /^https?:\/\//i.test(url) ? url : `${API_ORIGIN}${url}`
+  }
+
+  // WhatsApp-style date formatting
+  const formatChatDate = (timestamp) => {
+    if (!timestamp) return ''
+    
+    const messageDate = new Date(timestamp)
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const messageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate())
+    
+    // Check if message is from today
+    if (messageDay.getTime() === today.getTime()) {
+      return messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+    
+    // Check if message is from yesterday
+    if (messageDay.getTime() === yesterday.getTime()) {
+      return 'Yesterday'
+    }
+    
+    // Check if message is from this week (last 7 days)
+    const daysDiff = Math.floor((today - messageDay) / (1000 * 60 * 60 * 24))
+    if (daysDiff < 7) {
+      return messageDate.toLocaleDateString([], { weekday: 'short' })
+    }
+    
+    // For older messages, show date
+    return messageDate.toLocaleDateString([], { day: 'numeric', month: 'numeric', year: messageDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
+  }
+
+  // Format date for message separators
+  const formatMessageDate = (timestamp) => {
+    if (!timestamp) return ''
+    
+    const messageDate = new Date(timestamp)
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+    const messageDay = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate())
+    
+    // Check if message is from today
+    if (messageDay.getTime() === today.getTime()) {
+      return 'Today'
+    }
+    
+    // Check if message is from yesterday
+    if (messageDay.getTime() === yesterday.getTime()) {
+      return 'Yesterday'
+    }
+    
+    // Check if message is from this week (last 7 days)
+    const daysDiff = Math.floor((today - messageDay) / (1000 * 60 * 60 * 24))
+    if (daysDiff < 7) {
+      return messageDate.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })
+    }
+    
+    // For older messages, show full date
+    return messageDate.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: messageDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
   }
 
   // Long-press actions
@@ -1107,10 +1170,32 @@ const Chat = () => {
     return bTime - aTime // Most recent first
   })
 
-  const filteredChats = allChats.filter(chat => 
-    chat.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    chat.email.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  // Filter chats based on active filter
+  const getFilteredChats = () => {
+    let filtered = allChats;
+
+    // Apply filter logic
+    switch (activeFilter) {
+      case 'unread':
+        filtered = allChats.filter(chat => unreadCounts[chat.id] > 0);
+        break;
+      case 'groups':
+        filtered = allChats.filter(chat => chat.type === 'group');
+        break;
+      case 'all':
+      default:
+        filtered = allChats;
+        break;
+    }
+
+    // Apply search term filter
+    return filtered.filter(chat => 
+      chat.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      chat.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  };
+
+  const filteredChats = getFilteredChats();
 
   if (loading) {
     return (
@@ -1173,17 +1258,56 @@ const Chat = () => {
 
           {/* Search Bar */}
           <div className="p-3 bg-white border-b border-gray-200">
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-                  <input
-                    type="text"
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
                 placeholder="Search or start new chat"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 bg-gray-100 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-                  />
-                </div>
-              </div>
+              />
+            </div>
+
+            {/* Filter Buttons */}
+            <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+              <button
+                onClick={() => setActiveFilter('all')}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeFilter === 'all'
+                    ? 'bg-white text-green-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                All
+              </button>
+              <button
+                onClick={() => setActiveFilter('unread')}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeFilter === 'unread'
+                    ? 'bg-white text-green-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                Unread
+                {Object.values(unreadCounts).reduce((sum, count) => sum + count, 0) > 0 && (
+                  <span className="ml-1 bg-green-500 text-white text-xs rounded-full px-1.5 py-0.5">
+                    {Object.values(unreadCounts).reduce((sum, count) => sum + count, 0)}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => setActiveFilter('groups')}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activeFilter === 'groups'
+                    ? 'bg-white text-green-600 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                Groups
+              </button>
+            </div>
+          </div>
 
           {/* Chat List */}
               <div className="flex-1 overflow-y-auto">
@@ -1299,7 +1423,9 @@ const Chat = () => {
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                      <span className="text-xs text-gray-500">12:30</span>
+                        <span className="text-xs text-gray-500">
+                          {chat.lastMessage?.timestamp ? formatChatDate(chat.lastMessage.timestamp) : ''}
+                        </span>
                         {/* Unread count badge */}
                         {unreadCounts[chat.id] && unreadCounts[chat.id] > 0 && (
                           <div className="bg-green-500 text-white text-xs rounded-full px-2 py-1 min-w-[20px] text-center">
@@ -1456,6 +1582,15 @@ const Chat = () => {
               <div className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
                 <div className="max-w-8xl mx-auto">
                   {messages.map((message, index) => {
+                    // Check if we need to show a date separator
+                    const showDateSeparator = index === 0 || (() => {
+                      const currentMessageDate = new Date(message.createdAt || message.timestamp)
+                      const previousMessageDate = new Date(messages[index - 1].createdAt || messages[index - 1].timestamp)
+                      const currentDay = new Date(currentMessageDate.getFullYear(), currentMessageDate.getMonth(), currentMessageDate.getDate())
+                      const previousDay = new Date(previousMessageDate.getFullYear(), previousMessageDate.getMonth(), previousMessageDate.getDate())
+                      return currentDay.getTime() !== previousDay.getTime()
+                    })()
+
                     // More robust user checking logic to handle both string IDs and object references
                     let isCurrentUser = false
                     
@@ -1474,13 +1609,22 @@ const Chat = () => {
                     const senderProfileImage = typeof message.sender === 'object' ? message.sender?.profileImage : null
                     
                     return (
-                      <div
-                        key={message.id || message._id || index}
-                        className={`flex ${
-                          isCurrentUser ? 'justify-end' : 'justify-start'
-                        } mb-4`}
-                      >
-                        <div className={`flex items-start gap-2 max-w-sm lg:max-w-md ${
+                      <React.Fragment key={message.id || message._id || index}>
+                        {/* Date Separator */}
+                        {showDateSeparator && (
+                          <div className="flex justify-center my-4">
+                            <div className="bg-gray-200 text-gray-600 text-xs px-3 py-1 rounded-full">
+                              {formatMessageDate(message.createdAt || message.timestamp)}
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div
+                          className={`flex ${
+                            isCurrentUser ? 'justify-end' : 'justify-start'
+                          } mb-4`}
+                        >
+                          <div className={`flex items-start gap-2 max-w-sm lg:max-w-md ${
                           isCurrentUser ? 'flex-row-reverse' : 'flex-row'
                         }`}>
                           
@@ -1695,6 +1839,7 @@ const Chat = () => {
                           </div>
                         </div>
                       </div>
+                      </React.Fragment>
                     )
                   })}
                   <div ref={messagesEndRef} />

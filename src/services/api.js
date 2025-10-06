@@ -1,7 +1,7 @@
 import axios from "axios";
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://13.204.195.88:5002/api";
+  import.meta.env.VITE_API_URL || "http://localhost:5002/api";
 // Derived origin for building absolute asset URLs
 export const API_ORIGIN = API_BASE_URL.replace(/\/?api\/?$/, "");
 
@@ -145,6 +145,25 @@ export const callsAPI = {
   getDetails: (callId) => api.get(`/calls/${callId}`),
   updateNotes: (callId, notes) => api.put(`/calls/${callId}/notes`, { notes }),
   delete: (callId) => api.delete(`/calls/${callId}`),
+};
+
+// Group Calls API
+export const groupCallsAPI = {
+  test: () => api.get(`/group-calls/test`),
+  initiate: (groupId, callType = "voice") =>
+    api.post(`/group-calls/initiate`, { groupId, callType }),
+  join: (callId) => api.post(`/group-calls/${callId}/join`),
+  leave: (callId) => api.post(`/group-calls/${callId}/leave`),
+  end: (callId) => api.post(`/group-calls/${callId}/end`),
+  updateParticipantStatus: (callId, userId, status) =>
+    api.put(`/group-calls/${callId}/participant/${userId}/status`, status),
+  removeParticipant: (callId, userId) =>
+    api.delete(`/group-calls/${callId}/participant/${userId}`),
+  getDetails: (callId) => api.get(`/group-calls/${callId}`),
+  getActiveCalls: (groupId) => api.get(`/group-calls/group/${groupId}/active`),
+  getHistory: (groupId, params = {}) =>
+    api.get(`/group-calls/group/${groupId}/history`, { params }),
+  endAllActive: () => api.post(`/group-calls/debug/end-all-active`),
 };
 
 export default api;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useSocket } from '../contexts/SocketProvider'
-import { usersAPI, groupsAPI, messagesAPI, callsAPI, API_ORIGIN } from '../services/api'
+import { usersAPI, groupsAPI, messagesAPI, callsAPI, groupCallsAPI, API_ORIGIN } from '../services/api'
 import socketService from '../services/socket'
 import { toast } from 'react-hot-toast'
 import { Link } from 'react-router-dom'
@@ -30,6 +30,7 @@ import {
 } from 'lucide-react'
 import WebRTCAudioCall from '../components/WebRTCAudioCall'
 import WebRTCCall from '../components/WebRTCCall'
+import GroupCallUI from '../components/GroupCallUI'
 
 const UserDashboard = () => {
   const { user, logout } = useAuth()
@@ -73,6 +74,11 @@ const UserDashboard = () => {
   const [callData, setCallData] = useState(null)
   const [isIncomingCall, setIsIncomingCall] = useState(false)
   const [avatarPopup, setAvatarPopup] = useState(null) // For avatar popup
+
+  // Group call UI state
+  const [showGroupCallUI, setShowGroupCallUI] = useState(false)
+  const [groupCallData, setGroupCallData] = useState(null)
+  const [isIncomingGroupCall, setIsIncomingGroupCall] = useState(false)
 
   const resolveUrl = (url) => {
     if (!url) return url
@@ -779,6 +785,46 @@ const UserDashboard = () => {
           }))
         }
       })
+
+      // Group call events
+      socket.off('incoming-group-call')
+      socket.on('incoming-group-call', (data) => {
+        console.log('📞 Incoming group call received:', data)
+        toast.success(`Incoming group ${data.callType} call from ${data.initiator?.name || 'Unknown'}`, {
+          duration: 5000,
+          icon: '📞'
+        })
+        setIsIncomingGroupCall(true)
+        setGroupCallData({ 
+          callId: data.callId, 
+          callType: data.callType, 
+          groupId: data.groupId,
+          group: data.group,
+          initiator: data.initiator 
+        })
+        setShowGroupCallUI(true)
+      })
+
+      socket.off('group-call-initiated')
+      socket.on('group-call-initiated', (data) => {
+        console.log('📤 Group call initiated:', data)
+        setIsIncomingGroupCall(false)
+        setGroupCallData({ 
+          callId: data.callId, 
+          callType: data.callType, 
+          groupId: data.groupId,
+          group: data.group 
+        })
+        setShowGroupCallUI(true)
+      })
+
+      socket.off('group-call-error')
+      socket.on('group-call-error', (data) => {
+        console.error('❌ Group call error:', data)
+        toast.error(data.error || 'Group call failed', {
+          duration: 4000
+        })
+      })
     }
   }
 
@@ -1247,7 +1293,7 @@ const UserDashboard = () => {
           {/* Header with User Profile */}
           <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-800">WhatsApp Chat</h2>
+              <h2 className="text-lg font-semibold text-gray-800">User Dashboard</h2>
               <div className="flex items-center space-x-2">
                 <Link to="/profile" className="text-gray-500 hover:text-gray-700">
                   <Settings className="w-5 h-5" />
@@ -1622,36 +1668,101 @@ const UserDashboard = () => {
                 </div>
                 
                 <div className="flex items-center space-x-4">
-                  <PhoneCall className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
-                    if (!selectedChat || selectedChat.type !== 'personal') return
-                    try {
-                      const res = await callsAPI.initiate(selectedChat.id, 'voice')
-                      const call = res.data?.data?.call
-                      if (call && call._id) {
-                        setIsIncomingCall(false)
-                        setCallData({ callId: call._id, callType: 'voice', otherUser: call.otherUser })
-                        setShowCallUI(true)
-                        socket.emit('call-initiate', { receiverId: selectedChat.id, callType: 'voice', callId: call._id })
-                      }
-                    } catch (e) {
-                      console.error('Failed to initiate call', e)
-                    }
-                  }} />
-                  <Video className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
-                    if (!selectedChat || selectedChat.type !== 'personal') return
-                    try {
-                      const res = await callsAPI.initiate(selectedChat.id, 'video')
-                      const call = res.data?.data?.call
-                      if (call && call._id) {
-                        setIsIncomingCall(false)
-                        setCallData({ callId: call._id, callType: 'video', otherUser: call.otherUser })
-                        setShowCallUI(true)
-                        socket.emit('call-initiate', { receiverId: selectedChat.id, callType: 'video', callId: call._id })
-                      }
-                    } catch (e) {
-                      console.error('Failed to initiate video call', e)
-                    }
-                  }} />
+                  {selectedChat.type === 'personal' ? (
+                    <>
+                      <PhoneCall className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
+                        if (!selectedChat || selectedChat.type !== 'personal') return
+                        try {
+                          const res = await callsAPI.initiate(selectedChat.id, 'voice')
+                          const call = res.data?.data?.call
+                          if (call && call._id) {
+                            setIsIncomingCall(false)
+                            setCallData({ callId: call._id, callType: 'voice', otherUser: call.otherUser })
+                            setShowCallUI(true)
+                            socket.emit('call-initiate', { receiverId: selectedChat.id, callType: 'voice', callId: call._id })
+                          }
+                        } catch (e) {
+                          console.error('Failed to initiate call', e)
+                        }
+                      }} />
+                      <Video className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
+                        if (!selectedChat || selectedChat.type !== 'personal') return
+                        try {
+                          const res = await callsAPI.initiate(selectedChat.id, 'video')
+                          const call = res.data?.data?.call
+                          if (call && call._id) {
+                            setIsIncomingCall(false)
+                            setCallData({ callId: call._id, callType: 'video', otherUser: call.otherUser })
+                            setShowCallUI(true)
+                            socket.emit('call-initiate', { receiverId: selectedChat.id, callType: 'video', callId: call._id })
+                          }
+                        } catch (e) {
+                          console.error('Failed to initiate video call', e)
+                        }
+                      }} />
+                    </>
+                  ) : (
+                    <>
+                      <PhoneCall className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
+                        if (!selectedChat || selectedChat.type !== 'group') return
+                        console.log('Initiating group call for:', selectedChat.id, selectedChat.name)
+                        try {
+                          const res = await groupCallsAPI.initiate(selectedChat.id, 'voice')
+                          const call = res.data?.data?.call
+                          if (call && call._id) {
+                            setIsIncomingGroupCall(false)
+                            setGroupCallData({ 
+                              callId: call._id, 
+                              callType: 'voice', 
+                              groupId: selectedChat.id,
+                              group: { name: selectedChat.name, avatar: selectedChat.profileImage }
+                            })
+                            setShowGroupCallUI(true)
+                            // Notify via socket for realtime signaling
+                            socket.emit('group-call-initiate', { 
+                              groupId: selectedChat.id, 
+                              callType: 'voice', 
+                              callId: call._id 
+                            })
+                          }
+                        } catch (e) {
+                          console.error('Failed to initiate group call', e)
+                          console.error('Error response:', e.response?.data)
+                          const errorMessage = e.response?.data?.message || 'Failed to initiate group call'
+                          toast.error(errorMessage)
+                        }
+                      }} />
+                      <Video className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
+                        if (!selectedChat || selectedChat.type !== 'group') return
+                        console.log('Initiating group video call for:', selectedChat.id, selectedChat.name)
+                        try {
+                          const res = await groupCallsAPI.initiate(selectedChat.id, 'video')
+                          const call = res.data?.data?.call
+                          if (call && call._id) {
+                            setIsIncomingGroupCall(false)
+                            setGroupCallData({ 
+                              callId: call._id, 
+                              callType: 'video', 
+                              groupId: selectedChat.id,
+                              group: { name: selectedChat.name, avatar: selectedChat.profileImage }
+                            })
+                            setShowGroupCallUI(true)
+                            // Notify via socket for realtime signaling
+                            socket.emit('group-call-initiate', { 
+                              groupId: selectedChat.id, 
+                              callType: 'video', 
+                              callId: call._id 
+                            })
+                          }
+                        } catch (e) {
+                          console.error('Failed to initiate group video call', e)
+                          console.error('Error response:', e.response?.data)
+                          const errorMessage = e.response?.data?.message || 'Failed to initiate group video call'
+                          toast.error(errorMessage)
+                        }
+                      }} />
+                    </>
+                  )}
                   <MoreVertical className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" />
                 </div>
               </div>
@@ -2083,6 +2194,28 @@ const UserDashboard = () => {
             />
           )}
         </>
+      )}
+
+      {/* Group Call UI */}
+      {showGroupCallUI && groupCallData && (
+        <GroupCallUI
+          user={user}
+          callData={groupCallData}
+          isIncoming={isIncomingGroupCall}
+          onCallEnd={() => {
+            setShowGroupCallUI(false)
+            setGroupCallData(null)
+            setIsIncomingGroupCall(false)
+          }}
+          onCallAnswer={() => {
+            setIsIncomingGroupCall(false)
+          }}
+          onCallDecline={() => {
+            setShowGroupCallUI(false)
+            setGroupCallData(null)
+            setIsIncomingGroupCall(false)
+          }}
+        />
       )}
     </div>
   )

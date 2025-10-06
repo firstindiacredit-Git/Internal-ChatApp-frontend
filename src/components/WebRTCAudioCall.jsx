@@ -65,8 +65,49 @@ const WebRTCAudioCall = ({
       };
 
       peerConnectionRef.current.ontrack = (event) => {
-        if (remoteAudioRef.current) {
-          remoteAudioRef.current.srcObject = event.streams[0];
+        console.log('🎵 Remote audio track received:', event);
+        console.log('🎵 Track details:', {
+          kind: event.track.kind,
+          label: event.track.label,
+          enabled: event.track.enabled,
+          readyState: event.track.readyState,
+          streamsCount: event.streams.length
+        });
+        
+        if (event.streams && event.streams[0]) {
+          const remoteStream = event.streams[0];
+          console.log('🎵 Setting remote audio stream:', remoteStream);
+          console.log('🎵 Stream tracks:', remoteStream.getTracks());
+          
+          if (remoteAudioRef.current) {
+            remoteAudioRef.current.srcObject = remoteStream;
+            
+            // Only enable audio tracks if call is connected (accepted)
+            remoteStream.getAudioTracks().forEach(track => { 
+              track.enabled = callStatus === 'connected'; 
+              console.log('🎵 Remote audio track enabled:', track.enabled, 'callStatus:', callStatus);
+            });
+            
+            // Set volume to maximum
+            if (remoteAudioRef.current.volume !== undefined) {
+              remoteAudioRef.current.volume = 1.0;
+            }
+            
+            // Only play audio if call is connected (accepted)
+            if (callStatus === 'connected') {
+              remoteAudioRef.current.muted = false;
+              remoteAudioRef.current.play().catch((error) => {
+                if (error.name !== 'AbortError') {
+                  console.error('🎵 Error playing remote audio:', error);
+                }
+              });
+              console.log('🎵 Remote audio playing after call connected');
+            } else {
+              // Mute until call is accepted
+              remoteAudioRef.current.muted = true;
+              console.log('🎵 Remote audio muted until call is accepted');
+            }
+          }
         }
       };
 
@@ -253,14 +294,23 @@ const WebRTCAudioCall = ({
     const handleCallOffer = async (data) => {
       if (data.callId === callData.callId) {
         try {
-          await peerConnectionRef.current.setRemoteDescription(data.offer);
-          const answer = await peerConnectionRef.current.createAnswer();
-          await peerConnectionRef.current.setLocalDescription(answer);
-          socket.emit('call-answer-webrtc', {
-            callId: callData.callId,
-            answer: answer,
-          });
+          const currentState = peerConnectionRef.current.signalingState;
+          console.log('📞 Processing offer, current state:', currentState);
+          
+          if (currentState === 'stable') {
+            await peerConnectionRef.current.setRemoteDescription(data.offer);
+            const answer = await peerConnectionRef.current.createAnswer();
+            await peerConnectionRef.current.setLocalDescription(answer);
+            socket.emit('call-answer-webrtc', {
+              callId: callData.callId,
+              answer: answer,
+            });
+          } else {
+            console.warn('⚠️ Cannot process offer in state:', currentState);
+            setError('Call connection not ready');
+          }
         } catch (error) {
+          console.error('❌ Failed to handle call offer:', error);
           setError('Failed to establish connection');
         }
       }
@@ -269,8 +319,21 @@ const WebRTCAudioCall = ({
     const handleCallAnswerWebRTC = async (data) => {
       if (data.callId === callData.callId) {
         try {
-          await peerConnectionRef.current.setRemoteDescription(data.answer);
+          const currentState = peerConnectionRef.current.signalingState;
+          console.log('📞 Processing answer, current state:', currentState);
+          
+          if (currentState === 'have-local-offer' || currentState === 'have-local-pranswer') {
+            await peerConnectionRef.current.setRemoteDescription(data.answer);
+            console.log('✅ Answer processed successfully');
+          } else if (currentState === 'stable') {
+            // Connection already established
+            console.log('🔄 Connection already established, skipping answer');
+          } else {
+            console.warn('⚠️ Cannot process answer in state:', currentState);
+            setError('Call connection not ready');
+          }
         } catch (error) {
+          console.error('❌ Failed to handle call answer:', error);
           setError('Failed to establish connection');
         }
       }
@@ -324,6 +387,21 @@ const WebRTCAudioCall = ({
       initializeWebRTC();
     }
   }, [isIncoming, callStatus]);
+
+  // Enable audio when call is connected
+  useEffect(() => {
+    if (callStatus === 'connected' && remoteAudioRef.current) {
+      // Unmute remote audio when call is connected
+      remoteAudioRef.current.muted = false;
+      remoteAudioRef.current.volume = 1.0;
+      remoteAudioRef.current.play().catch((error) => {
+        if (error.name !== 'AbortError') {
+          console.error('🎵 Error playing remote audio after call connected:', error);
+        }
+      });
+      console.log('🎵 Remote audio unmuted after call connected');
+    }
+  }, [callStatus]);
 
   useEffect(() => {
     return () => {

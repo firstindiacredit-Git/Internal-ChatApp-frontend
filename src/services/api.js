@@ -166,4 +166,24 @@ export const groupCallsAPI = {
   endAllActive: () => api.post(`/group-calls/debug/end-all-active`),
 };
 
+// Time Settings API
+export const timeSettingsAPI = {
+  getSettings: () => api.get("/time-settings"),
+  updateSettings: (settings) => api.put("/time-settings", settings),
+  getCurrentTime: () => api.get("/time-settings/current-time"),
+};
+
+// Scheduled Disable API
+export const scheduledDisableAPI = {
+  getSchedules: () => api.get("/scheduled-disable"),
+  getSchedule: (id) => api.get(`/scheduled-disable/${id}`),
+  createSchedule: (scheduleData) =>
+    api.post("/scheduled-disable", scheduleData),
+  updateSchedule: (id, scheduleData) =>
+    api.put(`/scheduled-disable/${id}`, scheduleData),
+  deleteSchedule: (id) => api.delete(`/scheduled-disable/${id}`),
+  toggleSchedule: (id) => api.put(`/scheduled-disable/${id}/toggle`),
+  resetTrigger: (id) => api.put(`/scheduled-disable/${id}/reset-trigger`),
+};
+
 export default api;

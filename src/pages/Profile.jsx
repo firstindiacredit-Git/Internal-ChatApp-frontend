@@ -81,9 +81,17 @@ const Profile = () => {
     try {
       const formData = new FormData()
       formData.append('name', profile.name)
-      formData.append('phone', profile.phone)
-      formData.append('designation', profile.designation)
-      formData.append('bio', profile.bio)
+      
+      // Only append fields if they have values
+      if (profile.phone && profile.phone.trim()) {
+        formData.append('phone', profile.phone.trim())
+      }
+      if (profile.designation && profile.designation.trim()) {
+        formData.append('designation', profile.designation.trim())
+      }
+      if (profile.bio && profile.bio.trim()) {
+        formData.append('bio', profile.bio.trim())
+      }
       
       if (selectedFile) {
         formData.append('profileImage', selectedFile)
@@ -105,9 +113,16 @@ const Profile = () => {
       setUser(curr => curr ? ({ ...curr, ...updated }) : updated)
       toast.success('Profile updated successfully')
       setIsEditing(false)
+      setSelectedFile(null) // Clear selected file after successful upload
+      
+      // Refresh page after a short delay to show the success message
+      setTimeout(() => {
+        window.location.reload()
+      }, 1000)
     } catch (error) {
       console.error('Profile update error:', error)
-      toast.error('Failed to update profile')
+      const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Failed to update profile'
+      toast.error(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -167,7 +182,7 @@ const Profile = () => {
                 <div className="relative inline-block">
                   {imagePreview ? (
                     <img
-                      src={imagePreview.startsWith('http') ? imagePreview : `${API_ORIGIN}${imagePreview}`}
+                      src={imagePreview.startsWith('http') || imagePreview.startsWith('data:') ? imagePreview : `${API_ORIGIN}${imagePreview}`}
                       alt="Profile"
                       className="w-32 h-32 rounded-full object-cover mx-auto"
                     />
@@ -179,7 +194,7 @@ const Profile = () => {
                   
                   {isEditing && (
                     <div className="absolute bottom-0 right-0">
-                      <label className="bg-primary-600 text-white p-2 rounded-full cursor-pointer hover:bg-primary-700 transition-colors">
+                      <label className="bg-primary-600 text-white p-2.5 rounded-full cursor-pointer hover:bg-primary-700 transition-all duration-200 shadow-lg hover:shadow-xl flex items-center justify-center border-2 border-white">
                         <Camera className="w-4 h-4" />
                         <input
                           type="file"

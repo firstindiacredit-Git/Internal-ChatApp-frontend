@@ -7,11 +7,13 @@ import Dashboard from './pages/Dashboard'
 import UserDashboard from './pages/UserDashboard'
 import Chat from './pages/Chat'
 import UserManagement from './pages/UserManagement'
+import TimeManagement from './pages/TimeManagement'
 import GroupManagement from './pages/GroupManagement'
 import GroupProfile from './pages/GroupProfile'
 import Profile from './pages/Profile'
 import Forward from './pages/Forward'
 import LoadingSpinner from './components/LoadingSpinner'
+
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user, loading } = useAuth()
@@ -56,6 +58,7 @@ function AppRoutes() {
     <>
       {user ? (
         <SocketProvider user={user}>
+          
           <Routes>
             <Route 
               path="/login" 
@@ -90,6 +93,14 @@ function AppRoutes() {
               element={
                 <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
                   <UserManagement />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/time-management" 
+              element={
+                <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                  <TimeManagement />
                 </ProtectedRoute>
               } 
             />

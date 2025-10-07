@@ -29,12 +29,22 @@ const WebRTCCall = ({
   const iceCandidateQueueRef = useRef([]);
   const webrtcInitializedRef = useRef(false);
 
-  const rtcConfiguration = {
-    iceServers: [
+  // Build RTC configuration with optional TURN support via env variables
+  const buildRtcConfiguration = () => {
+    const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-    ],
+    ];
+    const turnUrl = import.meta?.env?.VITE_TURN_URL;
+    const turnUsername = import.meta?.env?.VITE_TURN_USERNAME;
+    const turnCredential = import.meta?.env?.VITE_TURN_CREDENTIAL;
+    if (turnUrl && turnUsername && turnCredential) {
+      iceServers.push({ urls: turnUrl, username: turnUsername, credential: turnCredential });
+    }
+    return { iceServers };
   };
+
+  const rtcConfiguration = buildRtcConfiguration();
 
   useEffect(() => {
     console.log('WebRTCCall useEffect - callData:', callData, 'isIncoming:', isIncoming);

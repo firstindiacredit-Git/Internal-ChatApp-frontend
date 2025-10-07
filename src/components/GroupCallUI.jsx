@@ -45,18 +45,36 @@ const GroupCallUI = ({
   const queuedIceCandidatesRef = useRef(new Map()); // Store ICE candidates by peer connection
   const processedAnswersRef = useRef(new Set()); // Track processed answers to prevent duplicates
 
-  const rtcConfiguration = {
-    iceServers: [
+  // Build RTC configuration with optional TURN support via env variables
+  const buildRtcConfiguration = () => {
+    const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
-    ],
-    iceCandidatePoolSize: 10,
-    bundlePolicy: 'max-bundle',
-    rtcpMuxPolicy: 'require',
+    ];
+
+    const turnUrl = import.meta?.env?.VITE_TURN_URL;
+    const turnUsername = import.meta?.env?.VITE_TURN_USERNAME;
+    const turnCredential = import.meta?.env?.VITE_TURN_CREDENTIAL;
+    if (turnUrl && turnUsername && turnCredential) {
+      iceServers.push({
+        urls: turnUrl,
+        username: turnUsername,
+        credential: turnCredential,
+      });
+    }
+
+    return {
+      iceServers,
+      iceCandidatePoolSize: 10,
+      bundlePolicy: 'max-bundle',
+      rtcpMuxPolicy: 'require',
+    };
   };
+
+  const rtcConfiguration = buildRtcConfiguration();
 
   useEffect(() => {
     if (callData && callData.callId && callData.groupId && isConnected) {
@@ -79,6 +97,15 @@ const GroupCallUI = ({
       cleanup();
     };
   }, [callData, isConnected]);
+
+  // Periodically reconcile peer connections to ensure full mesh is established
+  useEffect(() => {
+    if (!callData?.callId || !isConnected) return;
+    const interval = setInterval(() => {
+      reconcilePeerConnections();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [participants, isConnected, callData?.callId]);
 
   useEffect(() => {
     if (callStatus === 'connected' && callStartTimeRef.current) {
@@ -239,15 +266,40 @@ const GroupCallUI = ({
           });
           if (response.ok) {
             const callDetails = await response.json();
-            const existingParticipants = callDetails.data.call.participants
-              .filter(p => p.isActive && p.user._id !== user.id)
-              .map(p => ({ ...p.user, id: p.user._id }));
-            
-            if (existingParticipants.length > 0) {
+            const participantsRaw = callDetails?.data?.call?.participants || [];
+
+            const existingParticipants = participantsRaw
+              .filter(p => p && p.isActive)
+              .map(p => {
+                const rawUser = (typeof p.user === 'object' && p.user)
+                  ? p.user
+                  : (typeof p.user === 'string' && p.user)
+                    ? { _id: p.user }
+                    : (typeof p.userId === 'string' && p.userId)
+                      ? { _id: p.userId }
+                      : (typeof p.userId === 'object' && p.userId)
+                        ? p.userId
+                        : (typeof p._id === 'string' && p._id)
+                          ? { _id: p._id }
+                          : (typeof p.id === 'string' && p.id)
+                            ? { _id: p.id }
+                            : {};
+
+                const participantId = rawUser._id || rawUser.id;
+                return {
+                  ...rawUser,
+                  id: participantId,
+                  name: rawUser.name || p.name,
+                };
+              })
+              .filter(u => u.id && u.id !== user.id);
+
+            const uniqueExisting = dedupeParticipantsById(existingParticipants);
+            if (uniqueExisting.length > 0) {
               console.log('📞 Found existing participants:', existingParticipants);
               // Add existing participants to state
-              setParticipants(existingParticipants);
-              await establishMeshConnections(existingParticipants);
+              setParticipants(uniqueExisting);
+              await establishMeshConnections(uniqueExisting);
             } else {
               console.log('📞 No existing participants found');
             }
@@ -487,10 +539,11 @@ const GroupCallUI = ({
             socket.emit('group-call-ice-candidate', iceCandidateData);
           } else {
             // Queue ICE candidate for later when we have target user
-            if (!queuedIceCandidatesRef.current.has(targetUserId || 'unknown')) {
-              queuedIceCandidatesRef.current.set(targetUserId || 'unknown', []);
+            const queueKey = String(targetUserId || 'unknown');
+            if (!queuedIceCandidatesRef.current.has(queueKey)) {
+              queuedIceCandidatesRef.current.set(queueKey, []);
             }
-            queuedIceCandidatesRef.current.get(targetUserId || 'unknown').push(event.candidate);
+            queuedIceCandidatesRef.current.get(queueKey).push(event.candidate);
             console.log('🧊 ICE candidate queued for later sending:', {
               targetUserId: targetUserId || 'unknown',
               candidate: event.candidate.candidate,
@@ -574,7 +627,7 @@ const GroupCallUI = ({
   };
 
   const closePeerConnection = (targetUserId) => {
-    const peerConnection = peerConnectionsRef.current.get(targetUserId);
+    const peerConnection = peerConnectionsRef.current.get(String(targetUserId));
     if (peerConnection) {
       peerConnection.close();
       peerConnectionsRef.current.delete(targetUserId);
@@ -772,15 +825,30 @@ const GroupCallUI = ({
       } else {
         console.warn('⚠️ No peer connection found for ICE candidate from participant:', fromUserId);
         // Queue the candidate for when the peer connection is created
-        if (!queuedIceCandidatesRef.current.has(fromUserId)) {
-          queuedIceCandidatesRef.current.set(fromUserId, []);
+        const queueKey = String(fromUserId);
+        if (!queuedIceCandidatesRef.current.has(queueKey)) {
+          queuedIceCandidatesRef.current.set(queueKey, []);
         }
-        queuedIceCandidatesRef.current.get(fromUserId).push({
+        queuedIceCandidatesRef.current.get(queueKey).push({
           candidate: data.candidate,
           sdpMLineIndex: data.sdpMLineIndex,
           sdpMid: data.sdpMid,
         });
         console.log('🧊 ICE candidate queued for participant:', fromUserId);
+
+        // Proactively create a peer connection to minimize race conditions
+        try {
+          // Only create if it truly doesn't exist (double-check after queueing)
+          if (!peerConnectionsRef.current.get(queueKey)) {
+            await createPeerConnection(fromUserId);
+            // Give a brief moment for PC to initialize, then process queued candidates
+            setTimeout(() => {
+              processQueuedIceCandidatesForUser(fromUserId);
+            }, 100);
+          }
+        } catch (pcCreateError) {
+          console.error('❌ Failed to create peer connection after queuing ICE candidate for', fromUserId, pcCreateError);
+        }
       }
     } catch (error) {
       console.error('Error handling group call ICE candidate:', error);
@@ -858,6 +926,58 @@ const GroupCallUI = ({
     }
   };
 
+  // Reconcile: ensure we have a peer connection and offer for every known participant
+  const reconcilePeerConnections = async () => {
+    try {
+      const currentParticipants = participants || [];
+      for (const participant of currentParticipants) {
+        const participantId = participant && (participant.id || participant._id);
+        if (!participantId || participantId === user.id) continue;
+        if (!peerConnectionsRef.current.get(participantId)) {
+          const pc = await createPeerConnection(participantId);
+          if (pc) {
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+              if (callData && callData.callId && callData.groupId && offer) {
+                socket.emit('group-call-offer', {
+                  callId: callData.callId,
+                  groupId: callData.groupId,
+                  targetUserId: participantId,
+                  offer: offer,
+                });
+                // Send and process any queued ICE candidates
+                sendQueuedIceCandidates(participantId);
+                setTimeout(() => {
+                  processQueuedIceCandidatesForUser(participantId);
+                }, 100);
+              }
+            } catch (reconcileOfferError) {
+              console.error('Error reconciling offer for participant:', participantId, reconcileOfferError);
+            }
+          }
+        }
+      }
+    } catch (reconcileError) {
+      console.error('Error reconciling peer connections:', reconcileError);
+    }
+  };
+
+  // Helper to deduplicate participants by id
+  const dedupeParticipantsById = (users) => {
+    const seen = new Set();
+    const unique = [];
+    for (const u of users || []) {
+      const key = u && (u.id || u._id);
+      if (!key) continue;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(u);
+      }
+    }
+    return unique;
+  };
+
   // Handle participant joining - create connection with new participant
   const handleParticipantJoined = async (newParticipant) => {
     try {
@@ -933,12 +1053,38 @@ const GroupCallUI = ({
       });
       if (response.ok) {
         const callDetails = await response.json();
-        const allParticipants = callDetails.data.call.participants
-          .filter(p => p.isActive && p.user._id !== user.id)
-          .map(p => ({ ...p.user, id: p.user._id }));
-        
-        console.log('📞 Refreshed participants:', allParticipants);
-        setParticipants(allParticipants);
+        const participantsRaw = callDetails?.data?.call?.participants || [];
+
+        const allParticipants = participantsRaw
+          .filter(p => p && p.isActive)
+          .map(p => {
+            const rawUser = (typeof p.user === 'object' && p.user)
+              ? p.user
+              : (typeof p.user === 'string' && p.user)
+                ? { _id: p.user }
+                : (typeof p.userId === 'string' && p.userId)
+                  ? { _id: p.userId }
+                  : (typeof p.userId === 'object' && p.userId)
+                    ? p.userId
+                    : (typeof p._id === 'string' && p._id)
+                      ? { _id: p._id }
+                      : (typeof p.id === 'string' && p.id)
+                        ? { _id: p.id }
+                        : {};
+
+            const participantId = rawUser._id || rawUser.id;
+            return {
+              ...rawUser,
+              id: participantId,
+              name: rawUser.name || p.name,
+            };
+          })
+          .filter(u => u.id && u.id !== user.id);
+        const uniqueAll = dedupeParticipantsById(allParticipants);
+        // Only update list if we actually have participants, to avoid clearing during transient API states
+        if (uniqueAll.length > 0) {
+          setParticipants(uniqueAll);
+        }
       }
     } catch (error) {
       console.error('Error refreshing participants:', error);
@@ -1136,7 +1282,8 @@ const GroupCallUI = ({
 
   const sendQueuedIceCandidates = (targetUserId) => {
     // Send candidates for the specific user
-    const queuedCandidates = queuedIceCandidatesRef.current.get(targetUserId);
+    const queuedCandidates = queuedIceCandidatesRef.current.get(String(targetUserId))
+      || queuedIceCandidatesRef.current.get('unknown');
     if (queuedCandidates && queuedCandidates.length > 0 && socket && callData) {
       console.log(`🚀 Sending ${queuedCandidates.length} queued ICE candidates for ${targetUserId}`);
       queuedCandidates.forEach(candidate => {
@@ -1202,7 +1349,8 @@ const GroupCallUI = ({
     }
     
     // Clear the processed candidates
-    queuedIceCandidatesRef.current.delete(targetUserId);
+    queuedIceCandidatesRef.current.delete(String(targetUserId));
+    queuedIceCandidatesRef.current.delete('unknown');
     console.log(`🧊 Finished processing queued ICE candidates for ${targetUserId}`);
   };
 
@@ -1457,7 +1605,7 @@ const GroupCallUI = ({
             {/* Remote Videos Grid */}
             <div className="grid grid-cols-2 gap-2 p-2 h-full">
               {participants.map((participant, index) => (
-                <div key={participant.id} className="bg-gray-800 rounded-lg overflow-hidden">
+                <div key={`${participant.id}-${index}`} className="bg-gray-800 rounded-lg overflow-hidden">
                   {participant.stream ? (
                     <>
                       {callData.callType === 'video' ? (
@@ -1568,7 +1716,7 @@ const GroupCallUI = ({
                 
                 {/* Remote Participants */}
                 {participants.map((participant, index) => (
-                  <div key={participant.id} className="flex items-center space-x-3 p-3 bg-gray-800 rounded-lg">
+                  <div key={`${participant.id}-${index}`} className="flex items-center space-x-3 p-3 bg-gray-800 rounded-lg">
                     {/* Audio element for remote participant */}
                     {participant.stream && (
                       <audio

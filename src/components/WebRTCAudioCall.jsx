@@ -24,12 +24,22 @@ const WebRTCAudioCall = ({
   const localStreamRef = useRef(null);
   const callTimerRef = useRef(null);
 
-  const rtcConfiguration = {
-    iceServers: [
+  // Build RTC configuration with optional TURN support via env variables
+  const buildRtcConfiguration = () => {
+    const iceServers = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-    ],
+    ];
+    const turnUrl = import.meta?.env?.VITE_TURN_URL;
+    const turnUsername = import.meta?.env?.VITE_TURN_USERNAME;
+    const turnCredential = import.meta?.env?.VITE_TURN_CREDENTIAL;
+    if (turnUrl && turnUsername && turnCredential) {
+      iceServers.push({ urls: turnUrl, username: turnUsername, credential: turnCredential });
+    }
+    return { iceServers };
   };
+
+  const rtcConfiguration = buildRtcConfiguration();
 
   const initializeWebRTC = async () => {
     try {

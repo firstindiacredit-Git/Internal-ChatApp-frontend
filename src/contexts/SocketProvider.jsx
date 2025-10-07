@@ -498,6 +498,17 @@ export const SocketProvider = ({ children, user }) => {
     }
   };
 
+  // Profile update listener
+  const onProfileUpdated = (callback) => {
+    if (socket) {
+      socket.off('avatar-updated');
+      socket.on('avatar-updated', (data) => {
+        console.log('👤 Profile updated:', data);
+        callback(data);
+      });
+    }
+  };
+
   const value = {
     socket,
     isConnected,
@@ -513,6 +524,7 @@ export const SocketProvider = ({ children, user }) => {
     onReceiveMessage,
     onReceiveGroupMessage,
     onMessageSent,
+    onProfileUpdated,
     handleActivateUser,
     handleCloseNotification,
     getConnectionStatus: () => ({

@@ -143,6 +143,8 @@ const GroupManagement = () => {
     console.log('Editing group:', group)
     console.log('Group ID:', group.id)
     console.log('Group _id:', group._id)
+    console.log('Group members:', group.members)
+    console.log('Group avatar:', group.avatar)
     
     // Ensure we have a valid group ID
     const groupId = group.id || group._id
@@ -156,17 +158,42 @@ const GroupManagement = () => {
     const groupWithId = { ...group, id: groupId }
     console.log('Group with ID:', groupWithId)
     
+    // Extract member user IDs properly - handle both object and string cases
+    const extractedMembers = group.members?.map(member => {
+      let userId
+      if (typeof member.user === 'string') {
+        userId = member.user
+      } else if (member.user?.id) {
+        userId = member.user.id
+      } else if (member.user?._id) {
+        userId = member.user._id
+      } else {
+        userId = member.user
+      }
+      
+      console.log('Extracted member userId:', userId, 'from:', member.user)
+      
+      return {
+        user: userId,
+        role: member.role
+      }
+    }) || []
+    
+    console.log('Extracted members for formData:', extractedMembers)
+    
     setEditingGroup(groupWithId)
     setFormData({
       name: group.name,
       description: group.description || '',
-      members: group.members?.map(member => ({
-        user: member.user.id || member.user,
-        role: member.role
-      })) || []
+      members: extractedMembers
     })
     setAvatarFile(null)
-    setAvatarPreview(null)
+    // Set existing avatar as preview if available
+    if (group.avatar) {
+      setAvatarPreview(`${API_ORIGIN}${group.avatar}`)
+    } else {
+      setAvatarPreview(null)
+    }
     setShowModal(true)
   }
 
@@ -192,25 +219,60 @@ const GroupManagement = () => {
     console.log('Adding member:', userId)
     console.log('Current members:', formData.members)
     
-    if (!formData.members.find(m => m.user === userId)) {
+    // Check if member already exists (handle both string and object cases)
+    const memberExists = formData.members.find(m => {
+      const memberId = typeof m.user === 'string' ? m.user : (m.user?.id || m.user?._id)
+      return memberId === userId
+    })
+    
+    if (!memberExists) {
       const newMember = { user: userId, role: 'member' }
       const updatedMembers = [...formData.members, newMember]
-      console.log('Updated members:', updatedMembers)
+      console.log('Updated members after add:', updatedMembers)
       
-      setFormData({
-        ...formData,
+      // Create completely new formData object to trigger re-render
+      setFormData(prevData => ({
+        name: prevData.name,
+        description: prevData.description,
         members: updatedMembers
-      })
+      }))
+      
+      console.log('Member added successfully')
+      toast.success('Member added successfully')
     } else {
       console.log('Member already exists')
+      toast.info('Member already added')
     }
   }
 
   const removeMember = (userId) => {
-    setFormData({
-      ...formData,
-      members: formData.members.filter(m => m.user !== userId)
+    console.log('Removing member:', userId)
+    console.log('Current members before removal:', formData.members)
+    
+    const updatedMembers = formData.members.filter(m => {
+      const memberId = typeof m.user === 'string' ? m.user : (m.user?.id || m.user?._id)
+      const shouldKeep = memberId !== userId
+      console.log('Member ID:', memberId, 'Remove ID:', userId, 'Should keep:', shouldKeep)
+      return shouldKeep
     })
+    
+    console.log('Updated members after removal:', updatedMembers)
+    console.log('Length before:', formData.members.length, 'Length after:', updatedMembers.length)
+    
+    if (updatedMembers.length < formData.members.length) {
+      // Create completely new formData object to trigger re-render
+      setFormData(prevData => ({
+        name: prevData.name,
+        description: prevData.description,
+        members: updatedMembers
+      }))
+      
+      console.log('Member removed successfully')
+      toast.success('Member removed successfully')
+    } else {
+      console.log('Member not found for removal')
+      toast.error('Failed to remove member')
+    }
   }
 
   const filteredGroups = groups.filter(group => 
@@ -218,9 +280,21 @@ const GroupManagement = () => {
     group.description?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
-  const availableUsers = users.filter(userData => 
-    !formData.members.find(m => m.user === userData.id)
-  )
+  // Filter out users who are already members of the group
+  const availableUsers = users.filter(userData => {
+    const isAlreadyMember = formData.members.find(m => {
+      // Check if user ID matches (handle both string and object cases)
+      const memberId = typeof m.user === 'string' ? m.user : (m.user?.id || m.user?._id)
+      const currentUserId = userData.id || userData._id
+      return memberId === currentUserId
+    })
+    
+    if (showModal && isAlreadyMember) {
+      console.log('Filtering out user (already member):', userData.name, 'ID:', userData.id)
+    }
+    
+    return !isAlreadyMember
+  })
 
   if (loading) {
     return (
@@ -442,18 +516,37 @@ const GroupManagement = () => {
                 {/* Selected Members */}
                 {formData.members.length > 0 && (
                   <div className="mb-3">
+                    <p className="text-xs text-gray-600 mb-2">Selected Members: ({formData.members.length})</p>
                     <div className="flex flex-wrap gap-2">
-                      {formData.members.map((member, index) => {
-                        const userData = users.find(u => u.id === member.user)
+                      {formData.members.map((member) => {
+                        // Extract the user ID from member (could be string or object)
+                        const userId = typeof member.user === 'string' ? member.user : (member.user?.id || member.user?._id)
+                        
+                        // Find user data from the users list
+                        const userData = users.find(u => u.id === userId || u._id === userId)
+                        
+                        // Get member name with proper fallbacks
+                        const memberName = userData?.name || userData?.username || 'Unknown User'
+                        
+                        console.log('Rendering member:', { userId, userData: userData?.name, memberName })
+                        
                         return (
-                          <div key={index} className="flex items-center space-x-1 bg-primary-100 rounded-full px-3 py-1">
-                            <span className="text-sm text-primary-700">{userData?.name}</span>
+                          <div key={userId} className="flex items-center space-x-2 bg-primary-100 rounded-full px-3 py-1.5">
+                            <div className="w-5 h-5 bg-primary-500 rounded-full flex items-center justify-center">
+                              <span className="text-xs font-medium text-white">
+                                {memberName.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <span className="text-sm font-medium text-primary-700">{memberName}</span>
                             <button
                               type="button"
-                              onClick={() => removeMember(member.user)}
-                              className="text-primary-600 hover:text-primary-800"
+                              onClick={() => {
+                                console.log('Remove button clicked for userId:', userId)
+                                removeMember(userId)
+                              }}
+                              className="text-primary-600 hover:text-primary-900 transition-colors"
                             >
-                              <X className="w-3 h-3" />
+                              <X className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         )
@@ -464,30 +557,44 @@ const GroupManagement = () => {
 
                 {/* Add Members */}
                 <div className="border border-gray-300 rounded-lg p-3">
-                  <h4 className="text-sm font-medium text-gray-700 mb-2">Add Members:</h4>
-                  <div className="space-y-2 max-h-32 overflow-y-auto">
-                    {availableUsers.map((userData) => (
-                      <div key={userData.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded">
-                        <div className="flex items-center space-x-2">
-                          <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
-                            <span className="text-xs font-medium text-primary-600">
-                              {userData.name.charAt(0).toUpperCase()}
-                            </span>
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">Add Members: (No Limit)</h4>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {availableUsers.length > 0 ? (
+                      availableUsers.map((userData) => (
+                        <div key={userData.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded transition-colors">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-8 h-8 bg-primary-100 rounded-full flex items-center justify-center">
+                              <span className="text-xs font-medium text-primary-600">
+                                {userData.name?.charAt(0).toUpperCase() || 'U'}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{userData.name || userData.username || 'Unknown'}</p>
+                              <p className="text-xs text-gray-500">{userData.email}</p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">{userData.name}</p>
-                            <p className="text-xs text-gray-500">{userData.email}</p>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              console.log('Add button clicked for userId:', userData.id)
+                              addMember(userData.id)
+                            }}
+                            className="text-primary-600 hover:text-primary-800 transition-colors"
+                            title={`Add ${userData.name || userData.username}`}
+                          >
+                            <UserPlus className="w-4 h-4" />
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => addMember(userData.id)}
-                          className="text-primary-600 hover:text-primary-800"
-                        >
-                          <UserPlus className="w-4 h-4" />
-                        </button>
+                      ))
+                    ) : (
+                      <div className="text-center py-4 text-sm text-gray-500">
+                        {formData.members.length > 0 ? (
+                          <p>All available users have been added to this group.</p>
+                        ) : (
+                          <p>No users available to add.</p>
+                        )}
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
               </div>

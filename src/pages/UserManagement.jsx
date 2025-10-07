@@ -25,11 +25,15 @@ import {
   LayoutGrid,
   List as ListIcon,
   Eye,
-  EyeOff
+  EyeOff,
+  Clock,
+  Calendar
 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 
 const UserManagement = () => {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -70,19 +74,47 @@ const UserManagement = () => {
     try {
       // Toggle only those which need change
       const idToUser = new Map(users.map(u => [u.id, u]))
+      let successCount = 0
+      let skipCount = 0
+      
       for (const id of selectedUserIds) {
         const u = idToUser.get(id)
         if (!u) continue
-        if ((u.isActive ?? true) !== shouldBeActive) {
+        
+        // Skip self, superadmins (if admin), and users already in desired state
+        if (id === user?.id) {
+          skipCount++
+          continue
+        }
+        if (user.role === 'admin' && u.role === 'admin') {
+          skipCount++
+          continue
+        }
+        if ((u.isActive ?? true) === shouldBeActive) {
+          skipCount++
+          continue
+        }
+        
+        try {
           await usersAPI.toggleUserStatus(id)
+          successCount++
+        } catch (err) {
+          console.error(`Failed to toggle user ${id}:`, err)
+          skipCount++
         }
       }
-      toast.success(`Selected users ${confirmText}d`)
+      
+      if (successCount > 0) {
+        toast.success(`${successCount} user(s) ${confirmText}d successfully`)
+      }
+      if (skipCount > 0) {
+        toast.info(`${skipCount} user(s) skipped (already in desired state or cannot be modified)`)
+      }
       clearSelection()
       fetchUsers()
     } catch (e) {
       console.error('Bulk toggle error', e)
-      toast.error('Failed bulk update')
+     window.location.reload()
     }
   }
 
@@ -312,6 +344,14 @@ const UserManagement = () => {
                 </button>
               </div>
               <button
+                onClick={() => navigate('/time-management')}
+                className="btn-secondary inline-flex items-center"
+                title="Time Management Settings"
+              >
+                <Clock className="w-4 h-4 mr-2" />
+                Time Settings
+              </button>
+              <button
                 onClick={openCreateModal}
                 className="btn-primary inline-flex items-center"
               >
@@ -466,25 +506,44 @@ const UserManagement = () => {
                 </p>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-1">
-                  {userData.isActive ? (
-                    <Check className="w-4 h-4 text-green-600" />
-                  ) : (
-                    <XCircle className="w-4 h-4 text-red-600" />
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1">
+                    {userData.isActive ? (
+                      <Check className="w-4 h-4 text-green-600" />
+                    ) : (
+                      <XCircle className="w-4 h-4 text-red-600" />
+                    )}
+                    <span className={`text-sm font-medium px-2 py-1 rounded-full ${
+                      userData.isActive 
+                        ? 'text-green-700 bg-green-100' 
+                        : 'text-red-700 bg-red-100'
+                    }`}>
+                      {userData.isActive ? 'Active' : 'Disabled'}
+                    </span>
+                  </div>
+                  {userData.lastSeen && (
+                    <span className="text-xs text-gray-500">
+                      Last seen: {new Date(userData.lastSeen).toLocaleDateString()}
+                    </span>
                   )}
-                  <span className={`text-sm font-medium px-2 py-1 rounded-full ${
-                    userData.isActive 
-                      ? 'text-green-700 bg-green-100' 
-                      : 'text-red-700 bg-red-100'
-                  }`}>
-                    {userData.isActive ? 'Active' : 'Disabled'}
-                  </span>
                 </div>
-                {userData.lastSeen && (
-                  <span className="text-xs text-gray-500">
-                    Last seen: {new Date(userData.lastSeen).toLocaleDateString()}
-                  </span>
+                
+                {/* Disable Info */}
+                {!userData.isActive && userData.disabledAt && (
+                  <div className="bg-red-50 border border-red-200 rounded p-2">
+                    <div className="flex items-center text-xs text-red-700">
+                      <Calendar className="w-3 h-3 mr-1" />
+                      <span className="font-medium">Disabled:</span>
+                      <span className="ml-1">{new Date(userData.disabledAt).toLocaleString()}</span>
+                    </div>
+                    {userData.disableReason && (
+                      <div className="flex items-center text-xs text-red-600 mt-1">
+                        <span className="font-medium">Reason:</span>
+                        <span className="ml-1 capitalize">{userData.disableReason === 'auto' ? 'Auto-disabled' : 'Manually disabled'}</span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -534,7 +593,14 @@ const UserManagement = () => {
                     <td className="px-4 py-3 text-sm text-gray-700">{u.email}</td>
                     <td className="px-4 py-3 text-sm text-gray-700">{u.phone || '—'}</td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs font-medium px-2 py-1 rounded-full ${u.isActive ? 'text-green-700 bg-green-100' : 'text-red-700 bg-red-100'}`}>{u.isActive ? 'Active' : 'Disabled'}</span>
+                      <div className="space-y-1">
+                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${u.isActive ? 'text-green-700 bg-green-100' : 'text-red-700 bg-red-100'}`}>{u.isActive ? 'Active' : 'Disabled'}</span>
+                        {!u.isActive && u.disabledAt && (
+                          <div className="text-xs text-red-600" title={`Disabled at: ${new Date(u.disabledAt).toLocaleString()}`}>
+                            {u.disableReason === 'auto' ? '⏰ Auto' : '👤 Manual'}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">

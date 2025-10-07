@@ -12,6 +12,7 @@ import {
   Shield
 } from 'lucide-react'
 
+
 const GroupProfile = () => {
   const { groupId } = useParams()
   const navigate = useNavigate()
@@ -140,7 +141,7 @@ const GroupProfile = () => {
             <p className="text-gray-600 mb-4 max-w-md mx-auto">{group.description}</p>
           )}
           
-          <div className="flex items-center justify-center space-x-6 text-sm text-gray-500">
+          <div className="flex items-center justify-center space-x-6 text-sm text-gray-500 mb-6">
             <div className="flex items-center space-x-1">
               <Users className="w-4 h-4" />
               <span>{group.members?.length || 0} members</span>
@@ -150,6 +151,7 @@ const GroupProfile = () => {
               <span>Created {formatDate(group.createdAt)}</span>
             </div>
           </div>
+    
         </div>
 
         {/* Group Members */}

@@ -677,5 +677,3 @@ const SimpleGroupCall = ({
 };
 
 export default SimpleGroupCall;
-
-

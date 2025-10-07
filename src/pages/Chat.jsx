@@ -16,7 +16,15 @@ import {
   Paperclip,
   Image as ImageIcon,
   File,
-  Download
+  Download,
+  ChevronDown,
+  Copy,
+  Edit,
+  Forward,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  ArrowLeft
 } from 'lucide-react'
 import WebRTCCall from '../components/WebRTCCall';
 import WebRTCAudioCall from '../components/WebRTCAudioCall';
@@ -64,6 +72,63 @@ const Chat = () => {
   const [callData, setCallData] = useState(null)
   const [isIncomingCall, setIsIncomingCall] = useState(false)
   const [avatarPopup, setAvatarPopup] = useState(null) // For avatar popup
+  const [imagePreview, setImagePreview] = useState(null) // For image preview modal
+  const [videoPreview, setVideoPreview] = useState(null) // For video preview modal
+  const [documentPreview, setDocumentPreview] = useState(null) // For document preview modal
+  const [imageZoom, setImageZoom] = useState(1) // For image zoom level
+  const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 }) // For image pan position
+  const [isDragging, setIsDragging] = useState(false) // For drag state
+
+  // Image zoom functions
+  const handleZoomIn = () => {
+    setImageZoom(prev => {
+      const newZoom = Math.min(prev * 1.25, 4) // Max zoom 4x
+      return newZoom
+    })
+  }
+
+  const handleZoomOut = () => {
+    setImageZoom(prev => {
+      const newZoom = Math.max(prev / 1.25, 0.5) // Min zoom 0.5x
+      return newZoom
+    })
+  }
+
+  const handleResetZoom = () => {
+    setImageZoom(1)
+    setImagePosition({ x: 0, y: 0 })
+  }
+
+
+  const handleMouseDown = (e) => {
+    e.preventDefault()
+    setIsDragging(true)
+    setImagePosition({
+      x: e.clientX - imagePosition.x,
+      y: e.clientY - imagePosition.y
+    })
+  }
+
+  const handleMouseMove = (e) => {
+    if (isDragging) {
+      e.preventDefault()
+      setImagePosition({
+        x: e.clientX - imagePosition.x,
+        y: e.clientY - imagePosition.y
+      })
+    }
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+
+  // Reset zoom when image changes
+  const openImagePreview = (imageData) => {
+    setImagePreview(imageData)
+    setImageZoom(1)
+    setImagePosition({ x: 0, y: 0 })
+  }
   
   // Group Call UI state
   const [showGroupCallUI, setShowGroupCallUI] = useState(false)
@@ -143,6 +208,7 @@ const Chat = () => {
   const [selectedMessage, setSelectedMessage] = useState(null)
   const [editingMessage, setEditingMessage] = useState(null)
   const [editText, setEditText] = useState('')
+  const [messageDropdown, setMessageDropdown] = useState(null) // Track which message dropdown is open
 
   const getMessageId = (m) => (m?.id || m?._id || m?.messageId || '').toString()
 
@@ -160,42 +226,94 @@ const Chat = () => {
       setPressTimer(null)
     }
   }
-  const handleCopySelected = async () => {
+  // Dropdown menu handlers
+  const handleDropdownToggle = (messageId, event) => {
+    event.stopPropagation()
+    setMessageDropdown(messageDropdown === messageId ? null : messageId)
+  }
+
+  const handleDropdownAction = (action, message) => {
+    setSelectedMessage(message)
+    setMessageDropdown(null) // Close dropdown
+    
+    switch (action) {
+      case 'copy':
+        handleCopyMessage(message)
+        break
+      case 'edit':
+        handleEditMessage(message)
+        break
+      case 'forward':
+        handleForwardMessage(message)
+        break
+    }
+  }
+
+  const handleCopyMessage = async (message) => {
     try {
-      const toCopy = selectedMessage?.messageType === 'text'
-        ? (selectedMessage?.message || '')
-        : (resolveUrl(selectedMessage?.fileUrl) || selectedMessage?.fileName || '')
-      if (toCopy) await navigator.clipboard.writeText(toCopy)
-    } catch {}
+      const toCopy = message?.messageType === 'text'
+        ? (message?.message || '')
+        : (resolveUrl(message?.fileUrl) || message?.fileName || '')
+      if (toCopy) {
+        await navigator.clipboard.writeText(toCopy)
+        toast.success('Copied to clipboard')
+      }
+    } catch (error) {
+      console.error('Copy failed:', error)
+      toast.error('Failed to copy')
+    }
+  }
+
+  const handleForwardMessage = (message) => {
+    try { 
+      sessionStorage.setItem('forwardMessage', JSON.stringify({
+        id: message.id || message._id,
+        message: message.message,
+        messageType: message.messageType,
+        fileUrl: message.fileUrl,
+        fileName: message.fileName,
+        fileSize: message.fileSize,
+        fileType: message.fileType,
+      })) 
+      toast.success('Message ready to forward')
+      window.location.href = '/forward'
+    } catch (error) {
+      console.error('Forward setup failed:', error)
+      toast.error('Failed to prepare message for forwarding')
+    }
+  }
+
+  const handleEditMessage = (message) => {
+    if (message && message.messageType === 'text') {
+      // Check if current user is the sender of this message
+      const senderId = message.sender?.id || message.sender?._id || message.sender
+      const isCurrentUserMessage = senderId === user.id || senderId === user._id || senderId === user.id?.toString() || senderId === user._id?.toString()
+      
+      if (isCurrentUserMessage) {
+        setEditingMessage(message)
+        setEditText(message.message || '')
+      } else {
+        toast.error('You can only edit your own messages')
+      }
+    }
+  }
+
+  // Legacy handlers for long press (keeping for backward compatibility)
+  const handleCopySelected = async () => {
+    if (selectedMessage) {
+      await handleCopyMessage(selectedMessage)
+    }
     setShowActions(false)
   }
   const handleForwardSelected = () => {
     if (selectedMessage) {
-      try { sessionStorage.setItem('forwardMessage', JSON.stringify({
-        id: selectedMessage.id || selectedMessage._id,
-        message: selectedMessage.message,
-        messageType: selectedMessage.messageType,
-        fileUrl: selectedMessage.fileUrl,
-        fileName: selectedMessage.fileName,
-        fileSize: selectedMessage.fileSize,
-        fileType: selectedMessage.fileType,
-      })) } catch {}
-      window.location.href = '/forward'
+      handleForwardMessage(selectedMessage)
     }
     setShowActions(false)
   }
   const handleEditSelected = () => {
-    if (selectedMessage && selectedMessage.messageType === 'text') {
-      // Check if current user is the sender of this message
-      const senderId = selectedMessage.sender?.id || selectedMessage.sender?._id || selectedMessage.sender
-      const isCurrentUserMessage = senderId === user.id || senderId === user._id || senderId === user.id?.toString() || senderId === user._id?.toString()
-      
-      if (isCurrentUserMessage) {
-        setEditingMessage(selectedMessage)
-        setEditText(selectedMessage.message || '')
-      } else {
-        toast.error('You can only edit your own messages')
-      }
+    if (selectedMessage) {
+      handleEditMessage(selectedMessage)
     }
     setShowActions(false)
   }
@@ -777,6 +895,50 @@ const Chat = () => {
         })
       })
 
+      // Profile/Avatar update event - update user profiles in real-time
+      socket.off('avatar-updated')
+      socket.on('avatar-updated', (data) => {
+        console.log('👤 Profile updated received:', data)
+        const updatedUserId = data.userId?.toString() || data.userId
+        
+        // Update users list
+        setUsers(prevUsers => 
+          prevUsers.map(u => 
+            (u.id || u._id)?.toString() === updatedUserId
+              ? { ...u, profileImage: data.profileImage, name: data.name }
+              : u
+          )
+        )
+        
+        // Update selected chat if it's the user whose profile was updated
+        if (selectedChat && selectedChat.type === 'personal' && 
+            (selectedChat.id || selectedChat._id)?.toString() === updatedUserId) {
+          setSelectedChat(prev => ({
+            ...prev,
+            profileImage: data.profileImage,
+            name: data.name
+          }))
+        }
+        
+        // Update messages sender info for current chat
+        setMessages(prevMessages =>
+          prevMessages.map(msg => {
+            const senderId = (msg.sender?.id || msg.sender?._id || msg.sender)?.toString()
+            if (senderId === updatedUserId) {
+              return {
+                ...msg,
+                sender: {
+                  ...(typeof msg.sender === 'object' ? msg.sender : { id: msg.sender }),
+                  profileImage: data.profileImage,
+                  name: data.name
+                }
+              }
+            }
+            return msg
+          })
+        )
+      })
+
       // Messages seen event - update message status to show blue checkmarks
       socket.off('messages-seen')
       socket.on('messages-seen', (data) => {
@@ -1051,11 +1213,14 @@ const Chat = () => {
     }
   }
 
-  // Close file options when clicking outside
+  // Close file options and message dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (showFileOptions && !event.target.closest('.file-options-container')) {
         setShowFileOptions(false)
+      }
+      if (messageDropdown && !event.target.closest('.message-dropdown-container')) {
+        setMessageDropdown(null)
       }
     }
 
@@ -1063,7 +1228,7 @@ const Chat = () => {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showFileOptions])
+  }, [showFileOptions, messageDropdown])
 
   const sendMessage = async (e) => {
     e.preventDefault()
@@ -1262,7 +1427,14 @@ const Chat = () => {
       {/* Header with User Profile */}
           <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-800">WhatsApp Chat</h2>
+            <button
+                onClick={() => window.history.back()}
+                className="flex items-center text-gray-600 hover:text-gray-900 transition-colors"
+                title="Go back"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h2 className="text-lg text-start font-semibold text-gray-800">Admin Chat</h2>
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => window.location.href = '/profile'}
@@ -1448,25 +1620,7 @@ const Chat = () => {
                             Group
                           </span>
                         )}
-                        {showActions && selectedMessage && (
-                          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30" onClick={()=>setShowActions(false)}>
-                            <div className="bg-white rounded-t-2xl sm:rounded-xl w-full sm:w-80 p-4 shadow-xl" onClick={(e)=>e.stopPropagation()}>
-                              <div className="text-sm text-gray-600 mb-3">Actions</div>
-                              <div className="space-y-2">
-                                <button className="w-full btn-secondary" onClick={handleCopySelected}>Copy</button>
-                                {selectedMessage.messageType === 'text' && (() => {
-                                  const senderId = selectedMessage.sender?.id || selectedMessage.sender?._id || selectedMessage.sender
-                                  const isCurrentUserMessage = senderId === user.id || senderId === user._id || senderId === user.id?.toString() || senderId === user._id?.toString()
-                                  return isCurrentUserMessage ? (
-                                    <button className="w-full btn-primary" onClick={handleEditSelected}>Edit</button>
-                                  ) : null
-                                })()}
-                                <button className="w-full btn-primary" onClick={handleForwardSelected}>Forward</button>
-                                <button className="w-full btn-secondary" onClick={()=>setShowActions(false)}>Cancel</button>
-                              </div>
-                            </div>
-                          </div>
-                        )}
+                       
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500">
@@ -1531,6 +1685,224 @@ const Chat = () => {
                   className="w-full h-auto max-h-[70vh] object-contain"
                   onClick={(e) => e.stopPropagation()}
                 />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Image Preview Modal */}
+        {imagePreview && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-sm"
+            onClick={() => setImagePreview(null)}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+          >
+            <div className="relative w-[95vw] h-[95vh] flex items-center justify-center overflow-hidden">
+              {/* Close button */}
+              <button
+                onClick={() => setImagePreview(null)}
+                className="absolute top-4 right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                title="Close"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              
+              {/* Download button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const link = document.createElement('a')
+                  link.href = imagePreview.src
+                  link.download = imagePreview.alt
+                  document.body.appendChild(link)
+                  link.click()
+                  document.body.removeChild(link)
+                }}
+                className="absolute top-4 right-16 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                title="Download"
+              >
+                <Download className="w-5 h-5" />
+              </button>
+
+              {/* Zoom Controls */}
+              <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleZoomIn()
+                  }}
+                  className="bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleZoomOut()
+                  }}
+                  className="bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleResetZoom()
+                  }}
+                  className="bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                  title="Reset Zoom"
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Zoom Level Display */}
+              <div className="absolute bottom-4 left-4 z-10 bg-black/50 text-white px-3 py-2 rounded-lg text-sm">
+                {Math.round(imageZoom * 100)}%
+              </div>
+              
+              {/* Image */}
+              <img
+                src={imagePreview.src}
+                alt={imagePreview.alt}
+                className={`object-contain transition-transform duration-200 ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+                style={{
+                  transform: `translate(${imagePosition.x}px, ${imagePosition.y}px) scale(${imageZoom})`,
+                  maxWidth: 'none',
+                  maxHeight: 'none',
+                  width: 'auto',
+                  height: 'auto'
+                }}
+                onMouseDown={handleMouseDown}
+                onClick={(e) => e.stopPropagation()}
+                draggable={false}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Video Preview Modal */}
+        {videoPreview && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-sm"
+            onClick={() => setVideoPreview(null)}
+          >
+            <div className="relative w-[95vw] h-[95vh] flex items-center justify-center">
+              {/* Close button */}
+              <button
+                onClick={() => setVideoPreview(null)}
+                className="absolute top-4 right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                title="Close"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              
+              {/* Download button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const link = document.createElement('a')
+                  link.href = videoPreview.src
+                  link.download = videoPreview.alt
+                  document.body.appendChild(link)
+                  link.click()
+                  document.body.removeChild(link)
+                }}
+                className="absolute top-4 right-16 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                title="Download"
+              >
+                <Download className="w-5 h-5" />
+              </button>
+              
+              {/* Video */}
+              <video
+                src={videoPreview.src}
+                controls
+                autoPlay
+                className="max-w-full max-h-full object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Document Preview Modal */}
+        {documentPreview && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-sm"
+            onClick={() => setDocumentPreview(null)}
+          >
+            <div className="relative w-[95vw] h-[95vh] flex items-center justify-center">
+              {/* Close button */}
+              <button
+                onClick={() => setDocumentPreview(null)}
+                className="absolute top-4 right-4 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                title="Close"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              
+              {/* Download button */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  const link = document.createElement('a')
+                  link.href = documentPreview.src
+                  link.download = documentPreview.fileName
+                  document.body.appendChild(link)
+                  link.click()
+                  document.body.removeChild(link)
+                }}
+                className="absolute top-4 right-16 z-10 bg-black/50 hover:bg-black/70 text-white rounded-full p-3 transition-colors"
+                title="Download"
+              >
+                <Download className="w-5 h-5" />
+              </button>
+              
+              {/* Document Preview */}
+              <div className="bg-white rounded-lg shadow-2xl w-full h-full max-w-4xl max-h-[90vh] overflow-hidden">
+                {documentPreview.fileType === 'application/pdf' ? (
+                  <iframe
+                    src={documentPreview.src}
+                    className="w-full h-full border-0"
+                    title={documentPreview.fileName}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center p-8">
+                    <File className="w-24 h-24 text-gray-400 mb-4" />
+                    <h3 className="text-xl font-semibold text-gray-800 mb-2">{documentPreview.fileName}</h3>
+                    <p className="text-gray-600 mb-4">{(documentPreview.fileSize / 1024 / 1024).toFixed(2)} MB</p>
+                    <p className="text-sm text-gray-500 text-center">
+                      This file type cannot be previewed in the browser.<br />
+                      Click the download button to save and view the file.
+                    </p>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        const link = document.createElement('a')
+                        link.href = documentPreview.src
+                        link.download = documentPreview.fileName
+                        document.body.appendChild(link)
+                        link.click()
+                        document.body.removeChild(link)
+                      }}
+                      className="mt-4 bg-green-500 hover:bg-green-600 text-white px-6 py-2 rounded-lg transition-colors"
+                    >
+                      Download File
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1811,7 +2183,7 @@ const Chat = () => {
 
                           {/* Message Bubble */}
                           <div
-                            className={`flex flex-col px-3 py-2 rounded-lg ${
+                            className={`relative group flex flex-col px-3 py-2 rounded-lg ${
                               isCurrentUser
                                 ? 'bg-green-500 text-white rounded-br-none'
                                 : 'bg-gray-200 text-gray-900 rounded-bl-none'
@@ -1823,18 +2195,122 @@ const Chat = () => {
                             onTouchEnd={cancelLongPress}
                             onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(message); setShowActions(true); }}
                           >
+                            {/* Dropdown button for text messages */}
+                            {message.messageType === 'text' && (
+                              <>
+                                <button
+                                  onClick={(e) => handleDropdownToggle(getMessageId(message), e)}
+                                  className={`absolute top-1 right-1 z-10 p-1 rounded-full transition-all duration-200 ${
+                                    isCurrentUser 
+                                      ? 'bg-green-600/80 hover:bg-green-700/80 text-white' 
+                                      : 'bg-gray-300/80 hover:bg-gray-400/80 text-gray-700'
+                                  } ${messageDropdown === getMessageId(message) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                  title="More options"
+                                >
+                                  <ChevronDown className="w-3 h-3" />
+                                </button>
+
+                                {/* Dropdown menu for text messages */}
+                                {messageDropdown === getMessageId(message) && (
+                                  <div className="message-dropdown-container absolute top-8 right-1 z-20 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]">
+                                    <button
+                                      onClick={() => handleDropdownAction('copy', message)}
+                                      className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                    >
+                                      <Copy className="w-4 h-4" />
+                                      Copy
+                                    </button>
+                                    {(() => {
+                                      const senderId = message.sender?.id || message.sender?._id || message.sender
+                                      const isCurrentUserMessage = senderId === user.id || senderId === user._id || senderId === user.id?.toString() || senderId === user._id?.toString()
+                                      return isCurrentUserMessage ? (
+                                        <button
+                                          onClick={() => handleDropdownAction('edit', message)}
+                                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                        >
+                                          <Edit className="w-4 h-4" />
+                                          Edit
+                                        </button>
+                                      ) : null
+                                    })()}
+                                    <button
+                                      onClick={() => handleDropdownAction('forward', message)}
+                                      className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                    >
+                                      <Forward className="w-4 h-4" />
+                                      Forward
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
                             {/* File Display */}
                             {message.fileUrl && (
                               <div className="mb-2">
                                 {message.messageType === 'image' ? (
-                                  <div className="relative" onMouseDown={() => startLongPress(message)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} onTouchStart={() => startLongPress(message)} onTouchEnd={cancelLongPress}>
+                                  <div className="relative group" onMouseDown={() => startLongPress(message)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} onTouchStart={() => startLongPress(message)} onTouchEnd={cancelLongPress}>
+                                    {/* Dropdown button - WhatsApp style */}
+                                    <button
+                                      onClick={(e) => handleDropdownToggle(getMessageId(message), e)}
+                                      className={`absolute top-2 right-2 z-10 p-1.5 rounded-full transition-all duration-200 ${
+                                        isCurrentUser 
+                                          ? 'bg-green-500/80 hover:bg-green-600/80 text-white' 
+                                          : 'bg-gray-500/80 hover:bg-gray-600/80 text-white'
+                                      } ${messageDropdown === getMessageId(message) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                      title="More options"
+                                    >
+                                      <ChevronDown className="w-3 h-3" />
+                                    </button>
+
+                                    {/* Dropdown menu */}
+                                    {messageDropdown === getMessageId(message) && (
+                                      <div className="message-dropdown-container absolute top-10 right-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]">
+                                        <button
+                                          onClick={() => handleDropdownAction('copy', message)}
+                                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                        >
+                                          <Copy className="w-4 h-4" />
+                                          Copy
+                                        </button>
+                                        {message.messageType === 'text' && (() => {
+                                          const senderId = message.sender?.id || message.sender?._id || message.sender
+                                          const isCurrentUserMessage = senderId === user.id || senderId === user._id || senderId === user.id?.toString() || senderId === user._id?.toString()
+                                          return isCurrentUserMessage ? (
+                                            <button
+                                              onClick={() => handleDropdownAction('edit', message)}
+                                              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                            >
+                                              <Edit className="w-4 h-4" />
+                                              Edit
+                                            </button>
+                                          ) : null
+                                        })()}
+                                        <button
+                                          onClick={() => handleDropdownAction('forward', message)}
+                                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                        >
+                                          <Forward className="w-4 h-4" />
+                                          Forward
+                                        </button>
+                                      </div>
+                                    )}
+
                                     <img
                                       src={resolveUrl(message.fileUrl)}
                                       alt={message.fileName}
-                                      className={`max-w-xs rounded-lg ${!isCurrentUser && !downloadedMap[(message.id || message._id)] ? 'blur-sm cursor-pointer' : 'cursor-default'} hover:opacity-90`}
+                                      className={`max-w-xs rounded-lg ${!isCurrentUser && !downloadedMap[(message.id || message._id)] ? 'blur-sm cursor-pointer' : 'cursor-pointer'} hover:opacity-90`}
                                       onClick={() => {
-                                        if (!isCurrentUser) {
+                                        if (!isCurrentUser && !downloadedMap[(message.id || message._id)]) {
+                                          // Download if not downloaded yet
                                           downloadFile(message.fileUrl, message.fileName, message.id || message._id)
+                                        } else {
+                                          // Show preview if already downloaded or sent by current user
+                                          openImagePreview({
+                                            src: resolveUrl(message.fileUrl),
+                                            alt: message.fileName,
+                                            sender: message.sender?.name || 'User',
+                                            timestamp: message.createdAt || message.timestamp
+                                          })
                                         }
                                       }}
                                     />
@@ -1857,14 +2333,69 @@ const Chat = () => {
                                     )}
                                   </div>
                                 ) : message.messageType === 'video' ? (
-                                  <div className="relative" onMouseDown={() => startLongPress(message)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} onTouchStart={() => startLongPress(message)} onTouchEnd={cancelLongPress}>
+                                  <div className="relative group" onMouseDown={() => startLongPress(message)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} onTouchStart={() => startLongPress(message)} onTouchEnd={cancelLongPress}>
+                                    {/* Dropdown button - WhatsApp style */}
+                                    <button
+                                      onClick={(e) => handleDropdownToggle(getMessageId(message), e)}
+                                      className={`absolute top-2 right-2 z-10 p-1.5 rounded-full transition-all duration-200 ${
+                                        isCurrentUser 
+                                          ? 'bg-green-500/80 hover:bg-green-600/80 text-white' 
+                                          : 'bg-gray-500/80 hover:bg-gray-600/80 text-white'
+                                      } ${messageDropdown === getMessageId(message) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                                      title="More options"
+                                    >
+                                      <ChevronDown className="w-3 h-3" />
+                                    </button>
+
+                                    {/* Dropdown menu */}
+                                    {messageDropdown === getMessageId(message) && (
+                                      <div className="message-dropdown-container absolute top-10 right-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]">
+                                        <button
+                                          onClick={() => handleDropdownAction('copy', message)}
+                                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                        >
+                                          <Copy className="w-4 h-4" />
+                                          Copy
+                                        </button>
+                                        {message.messageType === 'text' && (() => {
+                                          const senderId = message.sender?.id || message.sender?._id || message.sender
+                                          const isCurrentUserMessage = senderId === user.id || senderId === user._id || senderId === user.id?.toString() || senderId === user._id?.toString()
+                                          return isCurrentUserMessage ? (
+                                            <button
+                                              onClick={() => handleDropdownAction('edit', message)}
+                                              className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                            >
+                                              <Edit className="w-4 h-4" />
+                                              Edit
+                                            </button>
+                                          ) : null
+                                        })()}
+                                        <button
+                                          onClick={() => handleDropdownAction('forward', message)}
+                                          className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                        >
+                                          <Forward className="w-4 h-4" />
+                                          Forward
+                                        </button>
+                                      </div>
+                                    )}
+
                                     <video
                                       src={resolveUrl(message.fileUrl)}
                                       controls
-                                      className={`max-w-xs rounded-lg ${!isCurrentUser && !downloadedMap[(message.id || message._id)] ? 'blur-sm' : ''}`}
+                                      className={`max-w-xs rounded-lg ${!isCurrentUser && !downloadedMap[(message.id || message._id)] ? 'blur-sm' : ''} cursor-pointer`}
                                       onClick={() => {
-                                        if (!isCurrentUser) {
+                                        if (!isCurrentUser && !downloadedMap[(message.id || message._id)]) {
+                                          // Download if not downloaded yet
                                           downloadFile(message.fileUrl, message.fileName, message.id || message._id)
+                                        } else {
+                                          // Show preview if already downloaded or sent by current user
+                                          setVideoPreview({
+                                            src: resolveUrl(message.fileUrl),
+                                            alt: message.fileName,
+                                            sender: message.sender?.name || 'User',
+                                            timestamp: message.createdAt || message.timestamp
+                                          })
                                         }
                                       }}
                                     />
@@ -1887,7 +2418,28 @@ const Chat = () => {
                                     )}
                                   </div>
                                 ) : (
-                                  <div className="flex items-center space-x-2 p-2 bg-white bg-opacity-20 rounded-lg relative" onMouseDown={() => startLongPress(message)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress} onTouchStart={() => startLongPress(message)} onTouchEnd={cancelLongPress}>
+                                  <div className="flex items-center space-x-2 p-2 bg-white bg-opacity-20 rounded-lg relative cursor-pointer" 
+                                       onMouseDown={() => startLongPress(message)} 
+                                       onMouseUp={cancelLongPress} 
+                                       onMouseLeave={cancelLongPress} 
+                                       onTouchStart={() => startLongPress(message)} 
+                                       onTouchEnd={cancelLongPress}
+                                       onClick={() => {
+                                         if (!isCurrentUser && !downloadedMap[(message.id || message._id)]) {
+                                           // Download if not downloaded yet
+                                           downloadFile(message.fileUrl, message.fileName, message.id || message._id)
+                                         } else {
+                                           // Show preview if already downloaded or sent by current user
+                                           setDocumentPreview({
+                                             src: resolveUrl(message.fileUrl),
+                                             fileName: message.fileName,
+                                             fileSize: message.fileSize,
+                                             fileType: message.fileType,
+                                             sender: message.sender?.name || 'User',
+                                             timestamp: message.createdAt || message.timestamp
+                                           })
+                                         }
+                                       }}>
                                     <File className="w-5 h-5" />
                                     <div className="flex-1 min-w-0">
                                       <p className="text-sm font-medium truncate">{message.fileName}</p>
@@ -1895,9 +2447,12 @@ const Chat = () => {
                                         {(message.fileSize / 1024 / 1024).toFixed(2)} MB
                                       </p>
                                     </div>
-                                    {!isCurrentUser && (
+                                    {!isCurrentUser && !downloadedMap[(message.id || message._id)] && (
                                       <button
-                                        onClick={() => downloadFile(message.fileUrl, message.fileName, message.id || message._id)}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          downloadFile(message.fileUrl, message.fileName, message.id || message._id)
+                                        }}
                                         className="p-1 hover:bg-white hover:bg-opacity-20 rounded"
                                         disabled={downloadProgress[message.id || message._id]?.downloading}
                                       >
@@ -2064,34 +2619,6 @@ const Chat = () => {
                   </div>
                 )}
 
-                {/* File Options Modal */}
-                {showFileOptions && (
-                  <div className="file-options-container absolute bottom-16 left-4 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50">
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => handleFileSelect('image')}
-                        className="flex flex-col items-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
-                      >
-                        <ImageIcon className="w-8 h-8 text-green-600 mb-1" />
-                        <span className="text-xs text-gray-700">Image</span>
-                      </button>
-                      <button
-                        onClick={() => handleFileSelect('video')}
-                        className="flex flex-col items-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
-                      >
-                        <Video className="w-8 h-8 text-blue-600 mb-1" />
-                        <span className="text-xs text-gray-700">Video</span>
-                      </button>
-                      <button
-                        onClick={() => handleFileSelect('document')}
-                        className="flex flex-col items-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
-                      >
-                        <File className="w-8 h-8 text-purple-600 mb-1" />
-                        <span className="text-xs text-gray-700">Document</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
 
                 {/* Message Input */}
               <div className="bg-white border-t border-gray-200 p-4 relative">
@@ -2123,6 +2650,35 @@ const Chat = () => {
                       <Send className="w-5 h-5" />
                     </button>
                 </form>
+
+               {/* File Options Modal */}
+               {showFileOptions && (
+                  <div className="file-options-container absolute bottom-16 left-4 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-50">
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => handleFileSelect('image')}
+                        className="flex flex-col items-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <ImageIcon className="w-8 h-8 text-green-600 mb-1" />
+                        <span className="text-xs text-gray-700">Image</span>
+                      </button>
+                      <button
+                        onClick={() => handleFileSelect('video')}
+                        className="flex flex-col items-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <Video className="w-8 h-8 text-blue-600 mb-1" />
+                        <span className="text-xs text-gray-700">Video</span>
+                      </button>
+                      <button
+                        onClick={() => handleFileSelect('document')}
+                        className="flex flex-col items-center p-3 hover:bg-gray-100 rounded-lg transition-colors"
+                      >
+                        <File className="w-8 h-8 text-purple-600 mb-1" />
+                        <span className="text-xs text-gray-700">Document</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </>
             ) : (

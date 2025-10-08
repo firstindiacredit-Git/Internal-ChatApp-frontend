@@ -50,7 +50,9 @@ const UserDashboard = () => {
     onReceiveMessage, 
     onReceiveGroupMessage,
     onMessageSent,
-    getConnectionStatus 
+    getConnectionStatus,
+    isUserOnline,
+    getUserStatus
   } = useSocket()
   
   const [users, setUsers] = useState([])
@@ -63,6 +65,9 @@ const UserDashboard = () => {
   const [unreadCounts, setUnreadCounts] = useState({})
   const [lastMessages, setLastMessages] = useState({})
   const [activeFilter, setActiveFilter] = useState('all') // 'all', 'unread', 'groups'
+  const [hasMoreMessages, setHasMoreMessages] = useState(false) // For pagination
+  const [loadingMore, setLoadingMore] = useState(false) // Loading older messages
+  const messageLimit = 50 // Messages per page
   const [selectedFile, setSelectedFile] = useState(null)
   const [filePreview, setFilePreview] = useState(null)
   const [showFileOptions, setShowFileOptions] = useState(false)
@@ -211,6 +216,27 @@ const UserDashboard = () => {
     return messageDate.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: messageDate.getFullYear() !== now.getFullYear() ? 'numeric' : undefined })
   }
 
+  // Format last seen time (WhatsApp style)
+  const formatLastSeen = (lastSeen) => {
+    if (!lastSeen) return 'Last seen recently'
+    
+    const now = new Date()
+    const lastSeenDate = new Date(lastSeen)
+    const diffMs = now - lastSeenDate
+    const diffMins = Math.floor(diffMs / (1000 * 60))
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    
+    if (diffMins < 1) return 'Last seen just now'
+    if (diffMins < 60) return `Last seen ${diffMins} minute${diffMins === 1 ? '' : 's'} ago`
+    if (diffHours < 24) return `Last seen ${diffHours} hour${diffHours === 1 ? '' : 's'} ago`
+    if (diffDays === 1) return 'Last seen yesterday'
+    if (diffDays < 7) return `Last seen ${diffDays} day${diffDays === 1 ? '' : 's'} ago`
+    
+    // For older, show date
+    return `Last seen ${lastSeenDate.toLocaleDateString([], { month: 'short', day: 'numeric' })}`
+  }
+
   // Long-press actions
   const [pressTimer, setPressTimer] = useState(null)
   const [showActions, setShowActions] = useState(false)
@@ -353,6 +379,10 @@ const UserDashboard = () => {
     setEditText('')
   }
   const messagesEndRef = useRef(null)
+  const isInitialLoadRef = useRef(true)
+  const messagesContainerRef = useRef(null) // For scroll detection
+  const previousScrollHeightRef = useRef(0) // To maintain scroll position after loading older messages
+  const scrollHandlerTimeoutRef = useRef(null) // For debouncing scroll handler
 
   useEffect(() => {
     const loadChatStateFromDB = async () => {
@@ -423,6 +453,12 @@ const UserDashboard = () => {
 
   useEffect(() => {
     if (selectedChat) {
+      // Clear messages immediately when switching chats to prevent wrong messages showing
+      setMessages([])
+      setHasMoreMessages(false)
+      setLoadingMore(false)
+      
+      isInitialLoadRef.current = true  // Mark as initial load when chat changes
       fetchMessages()
       // Re-setup socket listeners for the new chat
       setupSocketListeners()
@@ -449,8 +485,77 @@ const UserDashboard = () => {
   }, [selectedChat])
 
   useEffect(() => {
-    scrollToBottom()
+    if (messages.length > 0) {
+      // Use instant scroll for initial load, smooth for new messages
+      if (isInitialLoadRef.current) {
+        setTimeout(() => {
+          scrollToBottom(true)
+          isInitialLoadRef.current = false
+        }, 100)
+      } else {
+        // Only auto-scroll if user is already near the bottom (within 200px)
+        // This prevents auto-scroll when user is viewing older messages
+        if (messagesContainerRef.current) {
+          const container = messagesContainerRef.current
+          const scrollHeight = container.scrollHeight
+          const scrollTop = container.scrollTop
+          const clientHeight = container.clientHeight
+          const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+          
+          // Only scroll if user is within 200px of bottom
+          if (distanceFromBottom < 200) {
+            scrollToBottom(false)
+          }
+        }
+      }
+    }
   }, [messages])
+
+  // Handle scroll to load more messages with debounce
+  const handleScroll = () => {
+    if (!messagesContainerRef.current || loadingMore || !hasMoreMessages || !selectedChat) return
+
+    // Clear any existing timeout
+    if (scrollHandlerTimeoutRef.current) {
+      clearTimeout(scrollHandlerTimeoutRef.current)
+    }
+
+    // Debounce the scroll handler to prevent rapid firing
+    scrollHandlerTimeoutRef.current = setTimeout(() => {
+      if (!messagesContainerRef.current || loadingMore || !hasMoreMessages) return
+
+      const container = messagesContainerRef.current
+      const scrollTop = container.scrollTop
+      
+      // If scrolled near the top (within 50px), load more
+      // Using 50px to reduce false triggers and prevent scroll loop
+      if (scrollTop < 50 && messages.length > 0) {
+        // Save current scroll height and scroll position before loading more
+        previousScrollHeightRef.current = container.scrollHeight
+        
+        // Load messages before the first message in current list
+        const oldestMessageId = messages[0]?._id || messages[0]?.id
+        if (oldestMessageId) {
+          fetchMessages(oldestMessageId)
+        }
+      }
+    }, 150) // 150ms debounce
+  }
+
+  // Attach scroll listener
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container || !selectedChat) return
+
+    container.addEventListener('scroll', handleScroll)
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+      // Clear any pending scroll handler timeouts
+      if (scrollHandlerTimeoutRef.current) {
+        clearTimeout(scrollHandlerTimeoutRef.current)
+      }
+    }
+  }, [messages, loadingMore, hasMoreMessages, selectedChat]) // Re-attach when these change
 
   // Function to refresh chat state from database for UserDashboard
   const refreshChatState = async () => {
@@ -1055,34 +1160,98 @@ const UserDashboard = () => {
     }));
   };
 
-  const fetchMessages = async () => {
+  const fetchMessages = async (before = null) => {
     try {
+      if (before) {
+        setLoadingMore(true) // Loading older messages
+      }
+      
       let response
+      const params = { limit: messageLimit }
+      if (before) {
+        params.before = before // Load messages before this ID
+      }
+      
       if (selectedChat.type === 'personal') {
         if (!selectedChat.id) {
           console.error('User ID is undefined for personal chat')
           return
         }
-        response = await messagesAPI.getPersonalMessages(selectedChat.id)
+        response = await messagesAPI.getPersonalMessages(selectedChat.id, params)
       } else {
         if (!selectedChat.id) {
           console.error('Group ID is undefined for group chat')
           return
         }
-        response = await messagesAPI.getGroupMessages(selectedChat.id)
+        response = await messagesAPI.getGroupMessages(selectedChat.id, params)
       }
       
-      const messagesData = response.data;
-      setMessages(messagesData);
+      // Handle both old and new response formats
+      let messagesData, hasMore
+      if (response.data && typeof response.data === 'object') {
+        // New format: { messages: [], hasMore: boolean }
+        if (Array.isArray(response.data.messages)) {
+          messagesData = response.data.messages
+          hasMore = response.data.hasMore || false
+        } 
+        // Old format: direct array
+        else if (Array.isArray(response.data)) {
+          messagesData = response.data
+          hasMore = response.data.length >= messageLimit
+        } else {
+          messagesData = []
+          hasMore = false
+        }
+      } else {
+        messagesData = []
+        hasMore = false
+      }
       
-      // Update last message for the selected chat
-      if (messagesData.length > 0) {
-        const lastMsg = messagesData[messagesData.length - 1];
-        updateLastMessage(selectedChat.id, lastMsg, lastMsg.sender?.id || lastMsg.sender);
+      if (before) {
+        // Loading older messages - prepend to existing messages
+        setMessages(prev => {
+          // Create a Set of existing message IDs to avoid duplicates
+          const existingIds = new Set(prev.map(msg => msg._id || msg.id))
+          
+          // Filter out any messages that already exist
+          const newMessages = messagesData.filter(msg => {
+            const msgId = msg._id || msg.id
+            return !existingIds.has(msgId)
+          })
+          
+          // Prepend only new messages
+          return [...newMessages, ...prev]
+        })
+        setHasMoreMessages(hasMore)
+        setLoadingMore(false)
+        
+        // Maintain scroll position after loading older messages
+        setTimeout(() => {
+          if (messagesContainerRef.current && previousScrollHeightRef.current > 0) {
+            const newScrollHeight = messagesContainerRef.current.scrollHeight
+            const scrollDiff = newScrollHeight - previousScrollHeightRef.current
+            // Add 100px padding to prevent re-triggering the scroll handler
+            messagesContainerRef.current.scrollTop = scrollDiff + 100
+          }
+        }, 0)
+      } else {
+        // Initial load - replace all messages
+        setMessages(messagesData || [])
+        setHasMoreMessages(hasMore)
+        
+        // Update last message for the selected chat
+        if (messagesData && messagesData.length > 0) {
+          const lastMsg = messagesData[messagesData.length - 1];
+          updateLastMessage(selectedChat.id, lastMsg, lastMsg.sender?.id || lastMsg.sender);
+        }
       }
     } catch (error) {
       console.error('Error fetching messages:', error)
       toast.error('Failed to load messages')
+      setMessages([]) // Set empty array on error
+      if (before) {
+        setLoadingMore(false)
+      }
     }
   }
 
@@ -1096,7 +1265,7 @@ const UserDashboard = () => {
     } else if (fileType === 'video') {
       input.accept = 'video/*'
     } else if (fileType === 'document') {
-      input.accept = '.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx'
+      input.accept = '.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.ppt,.pptx,.xlsm,.xlsx,.zip,.rar,.7z,.tar,.gz,.bz2,.xz,.iso,.dmg,.img,.bin,.exe,.msi,.dmg,.iso,.tar,.gz,.bz2,.xz,.img,.bin,.exe,.msi'
     }
     
     input.onchange = (e) => {
@@ -1374,8 +1543,8 @@ const UserDashboard = () => {
     }
   }
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = (instant = false) => {
+    messagesEndRef.current?.scrollIntoView({ behavior: instant ? 'instant' : 'smooth' })
   }
 
   const handleLogout = () => {
@@ -1640,10 +1809,6 @@ const UserDashboard = () => {
                         )
                       )}
                     </div>
-                    {/* Online indicator for personal chats - only for active users */}
-                    {chat.type === 'personal' && chat.isActive !== false && (
-                      <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-400 rounded-full border-2 border-white"></div>
-                    )}
                     {/* Disabled indicator for disabled users */}
                     {chat.type === 'personal' && chat.isActive === false && (
                       <div className="absolute bottom-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white flex items-center justify-center">
@@ -1671,7 +1836,6 @@ const UserDashboard = () => {
                             Group
                           </span>
                         )}
-                       
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-gray-500">
@@ -2024,7 +2188,11 @@ const UserDashboard = () => {
                       {selectedChat.type === 'personal' 
                         ? (selectedChat.isActive === false 
                           ? 'User is disabled - viewing mode only' 
-                          : 'last seen today at 10:30 AM') 
+                          : (isUserOnline(selectedChat.id) ? (
+                              <span className="text-green-600 font-medium">Online</span>
+                            ) : (
+                              formatLastSeen(getUserStatus(selectedChat.id).lastSeen)
+                            ))) 
                         : `${selectedChat.email}`
                       }
                     </p>
@@ -2132,9 +2300,32 @@ const UserDashboard = () => {
               </div>
 
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
+              <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
                 <div className="max-w-8xl mx-auto">
-                  {messages.map((message, index) => {
+                  {/* Loading indicator at top */}
+                  {loadingMore && (
+                    <div className="flex justify-center py-2">
+                      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                    </div>
+                  )}
+                  {/* Show "Load More" button if there are more messages */}
+                  {!loadingMore && hasMoreMessages && messages.length > 0 && (
+                    <div className="flex justify-center py-2">
+                      <button
+                        onClick={() => {
+                          const oldestMessageId = messages[0]?._id || messages[0]?.id
+                          if (oldestMessageId) {
+                            previousScrollHeightRef.current = messagesContainerRef.current?.scrollHeight || 0
+                            fetchMessages(oldestMessageId)
+                          }
+                        }}
+                        className="px-4 py-2 text-sm bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors"
+                      >
+                        Load Previous Messages
+                      </button>
+                    </div>
+                  )}
+                  {Array.isArray(messages) && messages.map((message, index) => {
                     // Check if we need to show a date separator
                     const showDateSeparator = index === 0 || (() => {
                       const currentMessageDate = new Date(message.createdAt || message.timestamp)

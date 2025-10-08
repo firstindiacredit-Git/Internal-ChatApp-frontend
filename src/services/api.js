@@ -5,12 +5,13 @@ const API_BASE_URL =
 // Derived origin for building absolute asset URLs
 export const API_ORIGIN = API_BASE_URL.replace(/\/?api\/?$/, "");
 
-// Create axios instance
+// Create axios instance with increased timeout for large file uploads
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json",
   },
+  timeout: 5 * 60 * 1000, // 5 minutes timeout for large files
 });
 
 // Add token to requests
@@ -98,22 +99,32 @@ export const groupsAPI = {
 
 // Messages API
 export const messagesAPI = {
-  getPersonalMessages: (userId) => api.get(`/messages/personal/${userId}`),
-  getGroupMessages: (groupId) => api.get(`/messages/group/${groupId}`),
-  sendPersonalMessage: (messageData) => {
+  getPersonalMessages: (userId, params = {}) =>
+    api.get(`/messages/personal/${userId}`, { params }),
+  getGroupMessages: (groupId, params = {}) =>
+    api.get(`/messages/group/${groupId}`, { params }),
+  sendPersonalMessage: (messageData, onUploadProgress) => {
     // Check if it's FormData (file upload) or regular object
     if (messageData instanceof FormData) {
       return api.post("/messages/personal", messageData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 10 * 60 * 1000, // 10 minutes for large file uploads
+        maxContentLength: 100 * 1024 * 1024, // 100MB
+        maxBodyLength: 100 * 1024 * 1024, // 100MB
+        onUploadProgress: onUploadProgress, // Upload progress callback
       });
     }
     return api.post("/messages/personal", messageData);
   },
-  sendGroupMessage: (messageData) => {
+  sendGroupMessage: (messageData, onUploadProgress) => {
     // Check if it's FormData (file upload) or regular object
     if (messageData instanceof FormData) {
       return api.post("/messages/group", messageData, {
         headers: { "Content-Type": "multipart/form-data" },
+        timeout: 10 * 60 * 1000, // 10 minutes for large file uploads
+        maxContentLength: 100 * 1024 * 1024, // 100MB
+        maxBodyLength: 100 * 1024 * 1024, // 100MB
+        onUploadProgress: onUploadProgress, // Upload progress callback
       });
     }
     return api.post("/messages/group", messageData);

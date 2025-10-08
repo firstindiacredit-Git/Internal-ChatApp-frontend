@@ -452,6 +452,18 @@ export const SocketProvider = ({ children, user }) => {
     return onlineUser ? onlineUser.isOnline : false;
   };
 
+  // Get user status (online/offline + lastSeen)
+  const getUserStatus = (userId) => {
+    const onlineUser = onlineUsers.find(u => u.userId === userId);
+    if (onlineUser) {
+      return {
+        isOnline: onlineUser.isOnline,
+        lastSeen: onlineUser.lastSeen
+      };
+    }
+    return { isOnline: false, lastSeen: null };
+  };
+
   // Join and leave group functionality
   const joinGroup = (groupId) => {
     if (socket && isConnected) {
@@ -519,6 +531,7 @@ export const SocketProvider = ({ children, user }) => {
     startTyping,
     stopTyping,
     isUserOnline,
+    getUserStatus,
     joinGroup,
     leaveGroup,
     onReceiveMessage,

@@ -166,8 +166,10 @@ export const groupCallsAPI = {
   join: (callId) => api.post(`/group-calls/${callId}/join`),
   leave: (callId) => api.post(`/group-calls/${callId}/leave`),
   end: (callId) => api.post(`/group-calls/${callId}/end`),
-  updateParticipantStatus: (callId, userId, status) =>
-    api.put(`/group-calls/${callId}/participant/${userId}/status`, status),
+  updateMuteStatus: (callId, isMuted) =>
+    api.put(`/group-calls/${callId}/mute`, { isMuted }),
+  updateVideoStatus: (callId, isVideoEnabled) =>
+    api.put(`/group-calls/${callId}/video`, { isVideoEnabled }),
   removeParticipant: (callId, userId) =>
     api.delete(`/group-calls/${callId}/participant/${userId}`),
   getDetails: (callId) => api.get(`/group-calls/${callId}`),

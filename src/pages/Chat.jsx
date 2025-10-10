@@ -29,6 +29,8 @@ import {
 import WebRTCCall from '../components/WebRTCCall';
 import WebRTCAudioCall from '../components/WebRTCAudioCall';
 import GroupCallUI from '../components/GroupCallUI';
+import JitsiGroupCall from '../components/JitsiGroupCall';
+import IncomingJitsiCall from '../components/IncomingJitsiCall';
 import { callsAPI, groupCallsAPI } from '../services/api'
 
 const Chat = () => {
@@ -461,6 +463,109 @@ const Chat = () => {
       }
     }
   }, [])
+
+  // Setup persistent call listeners that work regardless of selected chat
+  useEffect(() => {
+    if (!socket) return
+
+    console.log('🔧 Setting up PERSISTENT call listeners for Chat Page...')
+
+    // WebRTC call events - 1-on-1 calls
+    socket.off('incoming-call')
+    socket.on('incoming-call', (data) => {
+      console.log('📞 Chat Page - Incoming call received:', data)
+      toast.success(`Incoming ${data.callType} call from ${data.caller?.name || 'Unknown'}`, {
+        duration: 5000,
+        icon: '📞'
+      })
+      setIsIncomingCall(true)
+      setCallData({ callId: data.callId, callType: data.callType, caller: data.caller })
+      setShowCallUI(true)
+    })
+
+    socket.off('call-initiated')
+    socket.on('call-initiated', (data) => {
+      console.log('📤 Chat Page - Call initiated:', data)
+      setIsIncomingCall(false)
+      setCallData({ callId: data.callId, callType: data.callType, otherUser: data.receiver })
+      setShowCallUI(true)
+    })
+
+    socket.off('call-error')
+    socket.on('call-error', (data) => {
+      console.error('❌ Chat Page - Call error:', data)
+      toast.error(data.error || 'Call failed', {
+        duration: 4000
+      })
+    })
+
+    // Group call events
+    socket.off('incoming-group-call')
+    socket.on('incoming-group-call', (data) => {
+      console.log('📞 ========================================')
+      console.log('📞 Chat Page - INCOMING GROUP CALL RECEIVED!')
+      console.log('📞 Call ID:', data.callId)
+      console.log('📞 Call Type:', data.callType)
+      console.log('📞 Room Name:', data.roomName)
+      console.log('📞 Group:', data.groupName)
+      console.log('📞 Initiator:', data.initiator?.name)
+      console.log('📞 ========================================')
+      
+      toast.success(`Incoming group ${data.callType} call from ${data.initiator?.name || 'Unknown'} in ${data.groupName}`, {
+        duration: 5000,
+        icon: '📞'
+      })
+      setIsIncomingGroupCall(true)
+      setGroupCallData({ 
+        callId: data.callId, 
+        callType: data.callType, 
+        groupId: data.groupId,
+        roomName: data.roomName,
+        group: data.group || { name: data.groupName },
+        initiator: data.initiator 
+      })
+      setShowGroupCallUI(true)
+    })
+
+    socket.off('group-call-initiated')
+    socket.on('group-call-initiated', (data) => {
+      console.log('📤 ========================================')
+      console.log('📤 Chat Page - GROUP CALL INITIATED!')
+      console.log('📤 Call ID:', data.callId)
+      console.log('📤 Room Name:', data.roomName)
+      console.log('📤 Call Type:', data.callType)
+      console.log('📤 ========================================')
+      
+      setIsIncomingGroupCall(false)
+      setGroupCallData({ 
+        callId: data.callId, 
+        callType: data.callType, 
+        groupId: data.groupId,
+        roomName: data.roomName,
+        group: data.group 
+      })
+      setShowGroupCallUI(true)
+    })
+
+    socket.off('group-call-error')
+    socket.on('group-call-error', (data) => {
+      console.error('❌ Chat Page - Group call error:', data)
+      toast.error(data.error || 'Group call failed', {
+        duration: 4000
+      })
+    })
+
+    // Cleanup function - only remove call listeners
+    return () => {
+      console.log('🧹 Cleaning up PERSISTENT call listeners...')
+      socket.off('incoming-call')
+      socket.off('call-initiated')
+      socket.off('call-error')
+      socket.off('incoming-group-call')
+      socket.off('group-call-initiated')
+      socket.off('group-call-error')
+    }
+  }, [socket])
 
   useEffect(() => {
     if (selectedChat) {
@@ -978,36 +1083,13 @@ const Chat = () => {
       }
     });
 
-    // WebRTC call events
+    // Note: Call listeners (incoming-call, call-initiated, call-error, incoming-group-call, etc.) 
+    // are now set up in a separate persistent useEffect to ensure they work even when no chat is selected
+
+    // WebRTC call events - REMOVED (now in persistent useEffect)
+    // Group call events - REMOVED (now in persistent useEffect)
+
     if (socket) {
-      socket.off('incoming-call')
-      socket.on('incoming-call', (data) => {
-        console.log('📞 Incoming call received:', data)
-        toast.success(`Incoming ${data.callType} call from ${data.caller?.name || 'Unknown'}`, {
-          duration: 5000,
-          icon: '📞'
-        })
-        setIsIncomingCall(true)
-        setCallData({ callId: data.callId, callType: data.callType, caller: data.caller })
-        setShowCallUI(true)
-      })
-
-      socket.off('call-initiated')
-      socket.on('call-initiated', (data) => {
-        console.log('📤 Call initiated:', data)
-        setIsIncomingCall(false)
-        setCallData({ callId: data.callId, callType: data.callType, otherUser: data.receiver })
-        setShowCallUI(true)
-      })
-
-      socket.off('call-error')
-      socket.on('call-error', (data) => {
-        console.error('❌ Call error:', data)
-        toast.error(data.error || 'Call failed', {
-          duration: 4000
-        })
-      })
-
       // Profile/Avatar update event - update user profiles in real-time
       socket.off('avatar-updated')
       socket.on('avatar-updated', (data) => {
@@ -1066,46 +1148,6 @@ const Chat = () => {
             return msg
           }))
         }
-      })
-
-      // Group call events
-      socket.off('incoming-group-call')
-      socket.on('incoming-group-call', (data) => {
-        console.log('📞 Incoming group call received:', data)
-        toast.success(`Incoming group ${data.callType} call from ${data.initiator?.name || 'Unknown'} in ${data.groupName}`, {
-          duration: 5000,
-          icon: '📞'
-        })
-        setIsIncomingGroupCall(true)
-        setGroupCallData({ 
-          callId: data.callId, 
-          callType: data.callType, 
-          groupId: data.groupId,
-          groupName: data.groupName,
-          initiator: data.initiator 
-        })
-        setShowGroupCallUI(true)
-      })
-
-      socket.off('group-call-initiated')
-      socket.on('group-call-initiated', (data) => {
-        console.log('📤 Group call initiated:', data)
-        setIsIncomingGroupCall(false)
-        setGroupCallData({ 
-          callId: data.callId, 
-          callType: data.callType, 
-          groupId: data.groupId,
-          initiator: data.initiator 
-        })
-        setShowGroupCallUI(true)
-      })
-
-      socket.off('group-call-error')
-      socket.on('group-call-error', (data) => {
-        console.error('❌ Group call error:', data)
-        toast.error(data.error || 'Group call failed', {
-          duration: 4000
-        })
       })
     }
   }
@@ -2257,41 +2299,7 @@ const Chat = () => {
                       }} />
                     </>
                   )}
-                  {/* Debug buttons for group calls */}
-                  {selectedChat?.type === 'group' && (
-                    <div className="flex gap-2">
-                      <button 
-                        className="px-2 py-1 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
-                        onClick={async () => {
-                          try {
-                            const res = await groupCallsAPI.test()
-                            console.log('API test result:', res.data)
-                            toast.success('API test successful')
-                          } catch (e) {
-                            console.error('API test failed:', e)
-                            toast.error('API test failed')
-                          }
-                        }}
-                      >
-                        Test API
-                      </button>
-                      <button 
-                        className="px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600"
-                        onClick={async () => {
-                          try {
-                            const res = await groupCallsAPI.endAllActive()
-                            console.log('Ended active calls:', res.data)
-                            toast.success(`Ended ${res.data.data.endedCalls.length} active calls`)
-                          } catch (e) {
-                            console.error('Failed to end active calls:', e)
-                            toast.error('Failed to end active calls')
-                          }
-                        }}
-                      >
-                        Clear Calls
-                      </button>
-                    </div>
-                  )}
+                 
                   <MoreVertical className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" />
                 </div>
               </div>
@@ -2779,43 +2787,6 @@ const Chat = () => {
                 </div>
                 </div>
 
-                {/* Conditional Call UI Modals */}
-                {showCallUI && callData && (
-                  <>
-                    {callData.callType === 'video' ? (
-                      <WebRTCCall
-                        user={user}
-                        callData={callData}
-                        isIncoming={isIncomingCall}
-                        onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
-                        onCallAnswer={() => {}}
-                        onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
-                      />
-                    ) : (
-                      <WebRTCAudioCall
-                        user={user}
-                        callData={callData}
-                        isIncoming={isIncomingCall}
-                        onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
-                        onCallAnswer={() => {}}
-                        onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
-                      />
-                    )}
-                  </>
-                )}
-
-                {/* Group Call UI Modal */}
-                {showGroupCallUI && groupCallData && (
-                  <GroupCallUI
-                    user={user}
-                    callData={groupCallData}
-                    isIncoming={isIncomingGroupCall}
-                    onCallEnd={() => { setShowGroupCallUI(false); setGroupCallData(null); }}
-                    onCallAnswer={() => {}}
-                    onCallDecline={() => { setShowGroupCallUI(false); setGroupCallData(null); }}
-                  />
-                )}
-
                 {/* File Preview */}
                 {selectedFile && (
                   <div className="bg-gray-50 border-t border-gray-200 p-3">
@@ -2953,6 +2924,99 @@ const Chat = () => {
             )}
         </div>
       </div>
+
+      {/* Call UI Components - Outside selectedChat condition */}
+      {/* Conditional Call UI Modals - 1-on-1 calls */}
+      {showCallUI && callData && (
+        <>
+          {callData.callType === 'video' ? (
+            <WebRTCCall
+              user={user}
+              callData={callData}
+              isIncoming={isIncomingCall}
+              onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
+              onCallAnswer={() => {}}
+              onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
+            />
+          ) : (
+            <WebRTCAudioCall
+              user={user}
+              callData={callData}
+              isIncoming={isIncomingCall}
+              onCallEnd={() => { setShowCallUI(false); setCallData(null); }}
+              onCallAnswer={() => {}}
+              onCallDecline={() => { setShowCallUI(false); setCallData(null); }}
+            />
+          )}
+        </>
+      )}
+
+      {/* Incoming Jitsi Call Notification - for group video calls */}
+      {showGroupCallUI && groupCallData && isIncomingGroupCall && groupCallData.callType === 'video' && (
+        <IncomingJitsiCall
+          callData={groupCallData}
+          onAccept={() => {
+            console.log('📞 Chat Page - Accepting incoming video call')
+            setIsIncomingGroupCall(false)
+            
+            // Notify via socket for real-time updates
+            if (socket && groupCallData?.callId) {
+              socket.emit('group-call-join', {
+                callId: groupCallData.callId,
+                groupId: groupCallData.groupId,
+              })
+            }
+          }}
+          onDecline={() => {
+            setShowGroupCallUI(false)
+            setGroupCallData(null)
+            setIsIncomingGroupCall(false)
+            // Notify via socket that call was declined
+            if (socket && groupCallData?.callId) {
+              socket.emit('group-call-decline', {
+                callId: groupCallData.callId,
+                groupId: groupCallData.groupId,
+              })
+            }
+          }}
+        />
+      )}
+
+      {/* Group Call UI - Use Jitsi for video calls, WebRTC for voice calls */}
+      {showGroupCallUI && groupCallData && !isIncomingGroupCall && (
+        groupCallData.callType === 'video' ? (
+          // Use Jitsi Meet for video calls
+          <JitsiGroupCall
+            user={user}
+            callData={groupCallData}
+            onCallEnd={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+          />
+        ) : (
+          // Use WebRTC for voice-only calls
+          <GroupCallUI
+            user={user}
+            callData={groupCallData}
+            isIncoming={isIncomingGroupCall}
+            onCallEnd={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+            onCallAnswer={() => {
+              setIsIncomingGroupCall(false)
+            }}
+            onCallDecline={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+          />
+        )
+      )}
     </div>
   )
 }

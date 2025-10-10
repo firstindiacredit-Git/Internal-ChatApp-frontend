@@ -504,28 +504,9 @@ const GroupCallUI = ({
 
       peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-          console.log('🧊 ICE candidate event received:', {
-            hasTargetUserId: !!targetUserId,
-            targetUserId: targetUserId,
-            hasSocket: !!socket,
-            hasCallData: !!callData,
-            hasCallId: !!callData?.callId,
-            hasGroupId: !!callData?.groupId,
-            candidateType: event.candidate.type,
-            candidateProtocol: event.candidate.protocol
-          });
+          console.log('🧊 ICE candidate generated for:', targetUserId);
           
-          if (targetUserId && socket && callData && callData.callId && callData.groupId) {
-            console.log('🧊 ICE candidate generated for participant:', targetUserId, {
-              hasCallData: !!callData,
-              callId: callData?.callId,
-              groupId: callData?.groupId,
-              isCallEstablished: isCallEstablished,
-              candidate: event.candidate.candidate,
-              type: event.candidate.type,
-              protocol: event.candidate.protocol
-            });
-            
+          if (targetUserId && socket && callData?.callId && callData?.groupId) {
             const iceCandidateData = {
               callId: callData.callId,
               groupId: callData.groupId,
@@ -535,81 +516,91 @@ const GroupCallUI = ({
               sdpMid: event.candidate.sdpMid,
             };
             
-            console.log('🚀 Sending ICE candidate with data:', iceCandidateData);
+            console.log('✅ Sending ICE candidate immediately');
             socket.emit('group-call-ice-candidate', iceCandidateData);
           } else {
-            // Queue ICE candidate for later when we have target user
+            // Queue ICE candidate only if essential data is missing
+            console.warn('⚠️ ICE candidate queued - missing data:', {
+              hasTargetUserId: !!targetUserId,
+              hasSocket: !!socket,
+              hasCallId: !!callData?.callId,
+              hasGroupId: !!callData?.groupId
+            });
             const queueKey = String(targetUserId || 'unknown');
             if (!queuedIceCandidatesRef.current.has(queueKey)) {
               queuedIceCandidatesRef.current.set(queueKey, []);
             }
-            queuedIceCandidatesRef.current.get(queueKey).push(event.candidate);
-            console.log('🧊 ICE candidate queued for later sending:', {
-              targetUserId: targetUserId || 'unknown',
+            queuedIceCandidatesRef.current.get(queueKey).push({
               candidate: event.candidate.candidate,
-              type: event.candidate.type
+              sdpMLineIndex: event.candidate.sdpMLineIndex,
+              sdpMid: event.candidate.sdpMid,
             });
           }
         } else {
-          console.log('🧊 ICE gathering completed for participant:', targetUserId);
+          console.log('🧊 ICE gathering completed for:', targetUserId);
         }
       };
 
       peerConnection.onconnectionstatechange = () => {
         const state = peerConnection.connectionState;
-        console.log(`Connection state with ${targetUserId}:`, state);
+        console.log(`🔗 Connection state with ${targetUserId}:`, state);
+        
         if (state === 'connected') {
-          console.log(`✅ WebRTC connection established with ${targetUserId}`);
-        } else if (state === 'disconnected') {
-          console.log(`⚠️ WebRTC connection disconnected with ${targetUserId}`);
-          // Wait before attempting reconnection
-          setTimeout(() => {
-            if (peerConnectionsRef.current.has(targetUserId) && 
-                peerConnection.connectionState === 'disconnected') {
-              console.log(`🔄 Attempting to reconnect to ${targetUserId}`);
-              // Try to restart ICE first
-              try {
-                peerConnection.restartIce();
-              } catch (error) {
-                console.log(`❌ ICE restart failed, recreating connection to ${targetUserId}`);
+          console.log(`✅ Connected to ${targetUserId}`);
+          // Update participant connection status
+          setParticipants(prev => 
+            prev.map(p => p.id === targetUserId ? { ...p, isConnected: true } : p)
+          );
+        } else if (state === 'failed' || state === 'closed') {
+          console.error(`❌ Connection ${state} with ${targetUserId}`);
+          setParticipants(prev => 
+            prev.map(p => p.id === targetUserId ? { ...p, isConnected: false } : p)
+          );
+          
+          // Try to reconnect for 'failed' state only
+          if (state === 'failed' && peerConnectionsRef.current.has(targetUserId)) {
+            console.log(`🔄 Will attempt to reconnect to ${targetUserId} in 3 seconds`);
+            setTimeout(() => {
+              if (peerConnectionsRef.current.has(targetUserId)) {
+                console.log(`🔄 Recreating connection to ${targetUserId}`);
                 closePeerConnection(targetUserId);
-                createPeerConnection(targetUserId);
+                const newPC = createPeerConnection(targetUserId);
+                // Recreate offer for this participant
+                if (newPC) {
+                  newPC.createOffer().then(offer => {
+                    newPC.setLocalDescription(offer);
+                    if (socket && callData?.callId && callData?.groupId) {
+                      socket.emit('group-call-offer', {
+                        callId: callData.callId,
+                        groupId: callData.groupId,
+                        targetUserId: targetUserId,
+                        offer: offer,
+                      });
+                    }
+                  }).catch(err => console.error('Error recreating offer:', err));
+                }
               }
-            }
-          }, 5000);
-        } else if (state === 'failed') {
-          console.log(`❌ WebRTC connection failed with ${targetUserId}:`, state);
-          // Attempt to reconnect after a delay
-          setTimeout(() => {
-            if (peerConnectionsRef.current.has(targetUserId)) {
-              console.log(`🔄 Attempting to reconnect to ${targetUserId}`);
-              // Recreate peer connection
-              closePeerConnection(targetUserId);
-              createPeerConnection(targetUserId);
-            }
-          }, 3000);
+            }, 3000);
+          }
+        } else if (state === 'disconnected') {
+          console.warn(`⚠️ Temporarily disconnected from ${targetUserId}`);
+          setParticipants(prev => 
+            prev.map(p => p.id === targetUserId ? { ...p, isConnected: false } : p)
+          );
         }
       };
 
       peerConnection.oniceconnectionstatechange = () => {
         const state = peerConnection.iceConnectionState;
-        console.log(`ICE connection state with ${targetUserId}:`, state);
+        console.log(`🧊 ICE state with ${targetUserId}:`, state);
         
         if (state === 'connected' || state === 'completed') {
-          console.log(`✅ ICE connection established with ${targetUserId}`);
+          console.log(`✅ ICE connected with ${targetUserId}`);
         } else if (state === 'failed') {
-          console.log(`❌ ICE connection failed with ${targetUserId}, attempting restart`);
-          // Try to restart ICE gathering
-          peerConnection.restartIce();
+          console.error(`❌ ICE failed with ${targetUserId}`);
+          toast.error(`Connection issue with ${participants.find(p => p.id === targetUserId)?.name || 'participant'}`);
         } else if (state === 'disconnected') {
-          console.log(`⚠️ ICE connection disconnected with ${targetUserId}`);
-          // Wait a bit before considering it failed
-          setTimeout(() => {
-            if (peerConnection.iceConnectionState === 'disconnected') {
-              console.log(`🔄 Restarting ICE for ${targetUserId}`);
-              peerConnection.restartIce();
-            }
-          }, 3000);
+          console.warn(`⚠️ ICE disconnected with ${targetUserId}`);
         }
       };
 
@@ -775,56 +766,32 @@ const GroupCallUI = ({
 
   const handleGroupCallIceCandidate = async (data) => {
     try {
-      console.log('🎯 Group call ICE candidate data received:', {
-        data: data,
-        from: data.from,
-        hasFrom: !!data.from,
-        fromId: data.from?.id,
-        fromUnderscoreId: data.from?._id,
-        fromName: data.from?.name,
-        hasCandidate: !!data.candidate,
-        candidate: data.candidate ? data.candidate.substring(0, 100) + '...' : 'No candidate'
-      });
+      console.log('🧊 Received ICE candidate from:', data.from?.name || data.from?.id);
       
       // Handle both id and _id fields for compatibility
-      const fromUserId = data.from.id || data.from._id;
+      const fromUserId = data.from?.id || data.from?._id;
       
       if (!fromUserId) {
-        console.error('❌ Cannot handle ICE candidate: missing from user ID', {
-          from: data.from,
-          hasId: !!data.from?.id,
-          hasUnderscoreId: !!data.from?._id
-        });
+        console.error('❌ Cannot handle ICE candidate: missing from user ID');
         return;
       }
       
       const peerConnection = peerConnectionsRef.current.get(fromUserId);
-      if (peerConnection) {
-        // Check if peer connection is in a valid state
-        if (peerConnection.signalingState === 'closed') {
-          console.warn('⚠️ Peer connection is closed, cannot add ICE candidate for:', fromUserId);
-          return;
-        }
-        
+      if (peerConnection && peerConnection.remoteDescription) {
+        // Only add ICE candidate if remote description is set
         try {
           await peerConnection.addIceCandidate({
             candidate: data.candidate,
             sdpMLineIndex: data.sdpMLineIndex,
             sdpMid: data.sdpMid,
           });
-          console.log('✅ ICE candidate processed for participant:', fromUserId);
-        } catch (addCandidateError) {
-          console.error('❌ Failed to add ICE candidate for', fromUserId, ':', addCandidateError);
-          // If adding candidate fails, it might be because the connection is in a bad state
-          if (addCandidateError.name === 'InvalidStateError') {
-            console.log('🔄 Peer connection in invalid state, attempting to recreate for:', fromUserId);
-            closePeerConnection(fromUserId);
-            // Don't recreate immediately, let the connection state handler deal with it
-          }
+          console.log('✅ ICE candidate added for:', fromUserId);
+        } catch (error) {
+          console.error('❌ Failed to add ICE candidate:', error.message);
         }
       } else {
-        console.warn('⚠️ No peer connection found for ICE candidate from participant:', fromUserId);
-        // Queue the candidate for when the peer connection is created
+        // Queue the candidate if peer connection not ready or no remote description yet
+        console.log('📋 Queuing ICE candidate for:', fromUserId);
         const queueKey = String(fromUserId);
         if (!queuedIceCandidatesRef.current.has(queueKey)) {
           queuedIceCandidatesRef.current.set(queueKey, []);
@@ -834,21 +801,6 @@ const GroupCallUI = ({
           sdpMLineIndex: data.sdpMLineIndex,
           sdpMid: data.sdpMid,
         });
-        console.log('🧊 ICE candidate queued for participant:', fromUserId);
-
-        // Proactively create a peer connection to minimize race conditions
-        try {
-          // Only create if it truly doesn't exist (double-check after queueing)
-          if (!peerConnectionsRef.current.get(queueKey)) {
-            await createPeerConnection(fromUserId);
-            // Give a brief moment for PC to initialize, then process queued candidates
-            setTimeout(() => {
-              processQueuedIceCandidatesForUser(fromUserId);
-            }, 100);
-          }
-        } catch (pcCreateError) {
-          console.error('❌ Failed to create peer connection after queuing ICE candidate for', fromUserId, pcCreateError);
-        }
       }
     } catch (error) {
       console.error('Error handling group call ICE candidate:', error);
@@ -1150,11 +1102,12 @@ const GroupCallUI = ({
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTracks = localStreamRef.current.getAudioTracks();
-      audioTracks.forEach(track => { track.enabled = isMuted; });
-      setIsMuted(!isMuted);
+      const newMuteState = !isMuted;
+      audioTracks.forEach(track => { track.enabled = !newMuteState; });
+      setIsMuted(newMuteState);
       
-      // Update participant status on server
-      groupCallsAPI.updateParticipantStatus(callData.callId, user.id, { isMuted: !isMuted })
+      // Update mute status on server
+      groupCallsAPI.updateMuteStatus(callData.callId, newMuteState)
         .then(() => console.log('🎤 Mute status updated on server'))
         .catch(error => console.error('Error updating mute status:', error));
     }
@@ -1167,66 +1120,18 @@ const GroupCallUI = ({
       videoTracks.forEach(track => { track.enabled = newVideoState; });
       setIsVideoEnabled(newVideoState);
       
-      // Update participant status on server
-      groupCallsAPI.updateParticipantStatus(callData.callId, user.id, { isVideoEnabled: newVideoState })
+      // Update video status on server
+      groupCallsAPI.updateVideoStatus(callData.callId, newVideoState)
         .then(() => console.log('🎥 Video status updated on server'))
         .catch(error => console.error('Error updating video status:', error));
     }
   };
 
-  // Remove participant from call (host only)
-  const removeParticipant = async (participantId) => {
-    try {
-      const response = await groupCallsAPI.removeParticipant(callData.callId, participantId);
-      
-      if (response.data.success) {
-        // Close peer connection
-        closePeerConnection(participantId);
-        // Remove from participants list
-        setParticipants(prev => prev.filter(p => p.id !== participantId));
-        toast.success('Participant removed from call');
-      }
-    } catch (error) {
-      console.error('Error removing participant:', error);
-      toast.error('Failed to remove participant');
-    }
-  };
-
-  // Mute/unmute specific participant (host only)
-  const toggleParticipantMute = async (participantId, isMuted) => {
-    try {
-      const response = await groupCallsAPI.updateParticipantStatus(callData.callId, participantId, { isMuted: !isMuted });
-      
-      if (response.data.success) {
-        // Update local state
-        setParticipants(prev => prev.map(p => 
-          p.id === participantId ? { ...p, isMuted: !isMuted } : p
-        ));
-        toast.success(`Participant ${!isMuted ? 'muted' : 'unmuted'}`);
-      }
-    } catch (error) {
-      console.error('Error toggling participant mute:', error);
-      toast.error('Failed to toggle participant mute');
-    }
-  };
-
-  // Toggle video for specific participant (host only)
-  const toggleParticipantVideo = async (participantId, isVideoEnabled) => {
-    try {
-      const response = await groupCallsAPI.updateParticipantStatus(callData.callId, participantId, { isVideoEnabled: !isVideoEnabled });
-      
-      if (response.data.success) {
-        // Update local state
-        setParticipants(prev => prev.map(p => 
-          p.id === participantId ? { ...p, isVideoEnabled: !isVideoEnabled } : p
-        ));
-        toast.success(`Participant video ${!isVideoEnabled ? 'enabled' : 'disabled'}`);
-      }
-    } catch (error) {
-      console.error('Error toggling participant video:', error);
-      toast.error('Failed to toggle participant video');
-    }
-  };
+  // Note: Host participant control functions removed - backend endpoints not implemented yet
+  // TODO: Implement backend routes for:
+  // - POST /group-calls/:callId/participant/:userId/remove (host only)
+  // - PUT /group-calls/:callId/participant/:userId/mute (host only)
+  // - PUT /group-calls/:callId/participant/:userId/video (host only)
 
   const cleanup = () => {
     // Clear stored remote streams
@@ -1586,6 +1491,25 @@ const GroupCallUI = ({
 
       {/* Audio Elements - following WebRTCAudioCall pattern */}
       <audio ref={localAudioRef} muted autoPlay style={{ display: 'none' }} />
+      {/* Remote audio elements for each participant */}
+      {participants.map((participant, index) => (
+        participant.stream && (
+          <audio
+            key={`audio-${participant.id}-${index}`}
+            autoPlay
+            playsInline
+            ref={(audio) => {
+              if (audio && participant.stream) {
+                audio.srcObject = participant.stream;
+                audio.volume = 1.0;
+                audio.muted = false;
+                audio.play().catch(err => console.log('Audio play error:', err));
+              }
+            }}
+            style={{ display: 'none' }}
+          />
+        )
+      ))}
       
       {/* Video Container */}
       <div className="relative h-80 bg-black">
@@ -1621,18 +1545,7 @@ const GroupCallUI = ({
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center relative">
-                          <audio
-                            autoPlay
-                            playsInline
-                             ref={(audio) => {
-                               if (audio && participant.stream) {
-                                 audio.srcObject = participant.stream;
-                                 audio.volume = 1.0;
-                                 audio.muted = false;
-                               }
-                             }}
-                            style={{ display: 'none' }}
-                          />
+                          {/* Audio is handled by dedicated audio elements above, not inline */}
                           <div className="text-center">
                             <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center mb-2">
                               <span className="text-white text-xl font-semibold">
@@ -1717,21 +1630,7 @@ const GroupCallUI = ({
                 {/* Remote Participants */}
                 {participants.map((participant, index) => (
                   <div key={`${participant.id}-${index}`} className="flex items-center space-x-3 p-3 bg-gray-800 rounded-lg">
-                    {/* Audio element for remote participant */}
-                    {participant.stream && (
-                      <audio
-                        autoPlay
-                        playsInline
-                         ref={(audio) => {
-                           if (audio && participant.stream) {
-                             audio.srcObject = participant.stream;
-                             audio.volume = 1.0;
-                             audio.muted = false;
-                           }
-                         }}
-                        style={{ display: 'none' }}
-                      />
-                    )}
+                    {/* Audio is handled by dedicated audio elements above, not inline */}
                     
                     <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
                       participant.stream ? 'bg-blue-600' : 'bg-gray-600'

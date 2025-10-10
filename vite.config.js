@@ -8,11 +8,10 @@ export default defineConfig({
     port: 3000,
     proxy: {
       "/api": {
-          target: "https://internalchat.pizeonfly.com:5001/",
-          // target: "http://localhost:5002/",
+        target: "https://internalchat.pizeonfly.com:5001/",
+        // target: "http://localhost:5002/",
         changeOrigin: true,
       },
     },
   },
 });
-

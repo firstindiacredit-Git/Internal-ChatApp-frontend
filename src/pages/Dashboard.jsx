@@ -19,10 +19,15 @@ import {
   LogOut
 } from 'lucide-react'
 import { useSocket } from '../contexts/SocketProvider'
+import WebRTCAudioCall from '../components/WebRTCAudioCall'
+import WebRTCCall from '../components/WebRTCCall'
+import GroupCallUI from '../components/GroupCallUI'
+import JitsiGroupCall from '../components/JitsiGroupCall'
+import IncomingJitsiCall from '../components/IncomingJitsiCall'
 
 const Dashboard = () => {
   const { user, logout } = useAuth()
-  const { notifications, handleActivateUser, handleCloseNotification } = useSocket()
+  const { socket, notifications, handleActivateUser, handleCloseNotification } = useSocket()
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalGroups: 0,
@@ -33,9 +38,107 @@ const Dashboard = () => {
   const [showNotificationPanel, setShowNotificationPanel] = useState(false)
   const [showAccountMenu, setShowAccountMenu] = useState(false)
 
+  // Call UI state
+  const [showCallUI, setShowCallUI] = useState(false)
+  const [callData, setCallData] = useState(null)
+  const [isIncomingCall, setIsIncomingCall] = useState(false)
+
+  // Group call UI state
+  const [showGroupCallUI, setShowGroupCallUI] = useState(false)
+  const [groupCallData, setGroupCallData] = useState(null)
+  const [isIncomingGroupCall, setIsIncomingGroupCall] = useState(false)
+
   useEffect(() => {
     fetchDashboardData()
   }, [])
+
+  // Setup socket listeners for incoming calls
+  useEffect(() => {
+    if (!socket) return
+
+    console.log('🔧 Setting up Admin Dashboard call listeners...')
+
+    // WebRTC call events - for 1-on-1 calls
+    socket.off('incoming-call')
+    socket.on('incoming-call', (data) => {
+      console.log('📞 Admin Dashboard - Incoming call received:', data)
+      toast.success(`Incoming ${data.callType} call from ${data.caller?.name || 'Unknown'}`, {
+        duration: 5000,
+        icon: '📞'
+      })
+      setIsIncomingCall(true)
+      setCallData({ callId: data.callId, callType: data.callType, caller: data.caller })
+      setShowCallUI(true)
+    })
+
+    socket.off('call-initiated')
+    socket.on('call-initiated', (data) => {
+      console.log('📤 Admin Dashboard - Call initiated:', data)
+      setIsIncomingCall(false)
+      setCallData({ callId: data.callId, callType: data.callType, otherUser: data.receiver })
+      setShowCallUI(true)
+    })
+
+    socket.off('call-error')
+    socket.on('call-error', (data) => {
+      console.error('❌ Admin Dashboard - Call error:', data)
+      toast.error(data.error || 'Call failed', {
+        duration: 4000
+      })
+    })
+
+    // Group call events
+    socket.off('incoming-group-call')
+    socket.on('incoming-group-call', (data) => {
+      console.log('📞 Admin Dashboard - Incoming group call received:', data)
+      toast.success(`Incoming group ${data.callType} call from ${data.initiator?.name || 'Unknown'}`, {
+        duration: 5000,
+        icon: '📞'
+      })
+      setIsIncomingGroupCall(true)
+      setGroupCallData({ 
+        callId: data.callId, 
+        callType: data.callType, 
+        groupId: data.groupId,
+        roomName: data.roomName,
+        group: data.group || { name: data.groupName },
+        initiator: data.initiator 
+      })
+      setShowGroupCallUI(true)
+    })
+
+    socket.off('group-call-initiated')
+    socket.on('group-call-initiated', (data) => {
+      console.log('📤 Admin Dashboard - Group call initiated:', data)
+      setIsIncomingGroupCall(false)
+      setGroupCallData({ 
+        callId: data.callId, 
+        callType: data.callType, 
+        groupId: data.groupId,
+        roomName: data.roomName,
+        group: data.group 
+      })
+      setShowGroupCallUI(true)
+    })
+
+    socket.off('group-call-error')
+    socket.on('group-call-error', (data) => {
+      console.error('❌ Admin Dashboard - Group call error:', data)
+      toast.error(data.error || 'Group call failed', {
+        duration: 4000
+      })
+    })
+
+    // Cleanup function
+    return () => {
+      socket.off('incoming-call')
+      socket.off('call-initiated')
+      socket.off('call-error')
+      socket.off('incoming-group-call')
+      socket.off('group-call-initiated')
+      socket.off('group-call-error')
+    }
+  }, [socket])
 
   // Close notification panel when clicking outside
   useEffect(() => {
@@ -440,6 +543,118 @@ const Dashboard = () => {
           )}
         </div>
       </div>
+
+      {/* WebRTC Call UI - for 1-on-1 calls */}
+      {showCallUI && callData && (
+        <>
+          {callData.callType === 'voice' ? (
+            <WebRTCAudioCall
+              user={user}
+              callData={callData}
+              isIncoming={isIncomingCall}
+              onCallEnd={() => {
+                setShowCallUI(false)
+                setCallData(null)
+                setIsIncomingCall(false)
+              }}
+              onCallAnswer={() => {
+                setIsIncomingCall(false)
+              }}
+              onCallDecline={() => {
+                setShowCallUI(false)
+                setCallData(null)
+                setIsIncomingCall(false)
+              }}
+            />
+          ) : (
+            <WebRTCCall
+              user={user}
+              callData={callData}
+              isIncoming={isIncomingCall}
+              onCallEnd={() => {
+                setShowCallUI(false)
+                setCallData(null)
+                setIsIncomingCall(false)
+              }}
+              onCallAnswer={() => {
+                setIsIncomingCall(false)
+              }}
+              onCallDecline={() => {
+                setShowCallUI(false)
+                setCallData(null)
+                setIsIncomingCall(false)
+              }}
+            />
+          )}
+        </>
+      )}
+
+      {/* Incoming Jitsi Call Notification - for group video calls */}
+      {showGroupCallUI && groupCallData && isIncomingGroupCall && groupCallData.callType === 'video' && (
+        <IncomingJitsiCall
+          callData={groupCallData}
+          onAccept={() => {
+            console.log('📞 Admin Dashboard - Accepting incoming video call')
+            setIsIncomingGroupCall(false)
+            
+            // Notify via socket for real-time updates
+            if (socket && groupCallData?.callId) {
+              socket.emit('group-call-join', {
+                callId: groupCallData.callId,
+                groupId: groupCallData.groupId,
+              })
+            }
+          }}
+          onDecline={() => {
+            setShowGroupCallUI(false)
+            setGroupCallData(null)
+            setIsIncomingGroupCall(false)
+            // Notify via socket that call was declined
+            if (socket && groupCallData?.callId) {
+              socket.emit('group-call-decline', {
+                callId: groupCallData.callId,
+                groupId: groupCallData.groupId,
+              })
+            }
+          }}
+        />
+      )}
+
+      {/* Group Call UI - Use Jitsi for video calls, WebRTC for voice calls */}
+      {showGroupCallUI && groupCallData && !isIncomingGroupCall && (
+        groupCallData.callType === 'video' ? (
+          // Use Jitsi Meet for video calls
+          <JitsiGroupCall
+            user={user}
+            callData={groupCallData}
+            onCallEnd={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+          />
+        ) : (
+          // Use WebRTC for voice-only calls
+          <GroupCallUI
+            user={user}
+            callData={groupCallData}
+            isIncoming={isIncomingGroupCall}
+            onCallEnd={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+            onCallAnswer={() => {
+              setIsIncomingGroupCall(false)
+            }}
+            onCallDecline={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+          />
+        )
+      )}
     </div>
   )
 }

@@ -38,6 +38,8 @@ import {
 import WebRTCAudioCall from '../components/WebRTCAudioCall'
 import WebRTCCall from '../components/WebRTCCall'
 import GroupCallUI from '../components/GroupCallUI'
+import JitsiGroupCall from '../components/JitsiGroupCall'
+import IncomingJitsiCall from '../components/IncomingJitsiCall'
 
 const UserDashboard = () => {
   const { user, logout } = useAuth()
@@ -383,6 +385,7 @@ const UserDashboard = () => {
   const messagesContainerRef = useRef(null) // For scroll detection
   const previousScrollHeightRef = useRef(0) // To maintain scroll position after loading older messages
   const scrollHandlerTimeoutRef = useRef(null) // For debouncing scroll handler
+  const shouldScrollToBottomRef = useRef(false) // Track when to force scroll to bottom
 
   useEffect(() => {
     const loadChatStateFromDB = async () => {
@@ -451,6 +454,109 @@ const UserDashboard = () => {
     }
   }, [])
 
+  // Setup persistent call listeners that work regardless of selected chat
+  useEffect(() => {
+    if (!socket) return
+
+    console.log('🔧 Setting up PERSISTENT call listeners for UserDashboard...')
+
+    // WebRTC call events - 1-on-1 calls
+    socket.off('incoming-call')
+    socket.on('incoming-call', (data) => {
+      console.log('📞 UserDashboard - Incoming call received:', data)
+      toast.success(`Incoming ${data.callType} call from ${data.caller?.name || 'Unknown'}`, {
+        duration: 5000,
+        icon: '📞'
+      })
+      setIsIncomingCall(true)
+      setCallData({ callId: data.callId, callType: data.callType, caller: data.caller })
+      setShowCallUI(true)
+    })
+
+    socket.off('call-initiated')
+    socket.on('call-initiated', (data) => {
+      console.log('📤 UserDashboard - Call initiated:', data)
+      setIsIncomingCall(false)
+      setCallData({ callId: data.callId, callType: data.callType, otherUser: data.receiver })
+      setShowCallUI(true)
+    })
+
+    socket.off('call-error')
+    socket.on('call-error', (data) => {
+      console.error('❌ UserDashboard - Call error:', data)
+      toast.error(data.error || 'Call failed', {
+        duration: 4000
+      })
+    })
+
+    // Group call events
+    socket.off('incoming-group-call')
+    socket.on('incoming-group-call', (data) => {
+      console.log('📞 ========================================')
+      console.log('📞 UserDashboard - INCOMING GROUP CALL RECEIVED!')
+      console.log('📞 Call ID:', data.callId)
+      console.log('📞 Call Type:', data.callType)
+      console.log('📞 Room Name:', data.roomName)
+      console.log('📞 Group:', data.groupName)
+      console.log('📞 Initiator:', data.initiator?.name)
+      console.log('📞 ========================================')
+      
+      toast.success(`Incoming group ${data.callType} call from ${data.initiator?.name || 'Unknown'}`, {
+        duration: 5000,
+        icon: '📞'
+      })
+      setIsIncomingGroupCall(true)
+      setGroupCallData({ 
+        callId: data.callId, 
+        callType: data.callType, 
+        groupId: data.groupId,
+        roomName: data.roomName,
+        group: data.group || { name: data.groupName },
+        initiator: data.initiator 
+      })
+      setShowGroupCallUI(true)
+    })
+
+    socket.off('group-call-initiated')
+    socket.on('group-call-initiated', (data) => {
+      console.log('📤 ========================================')
+      console.log('📤 UserDashboard - GROUP CALL INITIATED!')
+      console.log('📤 Call ID:', data.callId)
+      console.log('📤 Room Name:', data.roomName)
+      console.log('📤 Call Type:', data.callType)
+      console.log('📤 ========================================')
+      
+      setIsIncomingGroupCall(false)
+      setGroupCallData({ 
+        callId: data.callId, 
+        callType: data.callType, 
+        groupId: data.groupId,
+        roomName: data.roomName,
+        group: data.group 
+      })
+      setShowGroupCallUI(true)
+    })
+
+    socket.off('group-call-error')
+    socket.on('group-call-error', (data) => {
+      console.error('❌ UserDashboard - Group call error:', data)
+      toast.error(data.error || 'Group call failed', {
+        duration: 4000
+      })
+    })
+
+    // Cleanup function - only remove call listeners
+    return () => {
+      console.log('🧹 Cleaning up PERSISTENT call listeners...')
+      socket.off('incoming-call')
+      socket.off('call-initiated')
+      socket.off('call-error')
+      socket.off('incoming-group-call')
+      socket.off('group-call-initiated')
+      socket.off('group-call-error')
+    }
+  }, [socket])
+
   useEffect(() => {
     if (selectedChat) {
       // Clear messages immediately when switching chats to prevent wrong messages showing
@@ -492,6 +598,12 @@ const UserDashboard = () => {
           scrollToBottom(true)
           isInitialLoadRef.current = false
         }, 100)
+      } else if (shouldScrollToBottomRef.current) {
+        // Always scroll when user sends a message (WhatsApp behavior)
+        setTimeout(() => {
+          scrollToBottom(false)
+          shouldScrollToBottomRef.current = false
+        }, 100)
       } else {
         // Only auto-scroll if user is already near the bottom (within 200px)
         // This prevents auto-scroll when user is viewing older messages
@@ -502,7 +614,7 @@ const UserDashboard = () => {
           const clientHeight = container.clientHeight
           const distanceFromBottom = scrollHeight - scrollTop - clientHeight
           
-          // Only scroll if user is within 200px of bottom
+          // Only scroll if user is within 200px of bottom (for received messages)
           if (distanceFromBottom < 200) {
             scrollToBottom(false)
           }
@@ -962,36 +1074,13 @@ const UserDashboard = () => {
       }
     });
 
-    // WebRTC call events
+    // Note: Call listeners (incoming-call, call-initiated, call-error, incoming-group-call, etc.) 
+    // are now set up in a separate persistent useEffect to ensure they work even when no chat is selected
+
+    // WebRTC call events - REMOVED (now in persistent useEffect)
+    // Group call events - REMOVED (now in persistent useEffect)
+
     if (socket) {
-      socket.off('incoming-call')
-      socket.on('incoming-call', (data) => {
-        console.log('📞 Incoming call received:', data)
-        toast.success(`Incoming ${data.callType} call from ${data.caller?.name || 'Unknown'}`, {
-          duration: 5000,
-          icon: '📞'
-        })
-        setIsIncomingCall(true)
-        setCallData({ callId: data.callId, callType: data.callType, caller: data.caller })
-        setShowCallUI(true)
-      })
-
-      socket.off('call-initiated')
-      socket.on('call-initiated', (data) => {
-        console.log('📤 Call initiated:', data)
-        setIsIncomingCall(false)
-        setCallData({ callId: data.callId, callType: data.callType, otherUser: data.receiver })
-        setShowCallUI(true)
-      })
-
-      socket.off('call-error')
-      socket.on('call-error', (data) => {
-        console.error('❌ Call error:', data)
-        toast.error(data.error || 'Call failed', {
-          duration: 4000
-        })
-      })
-
       // Profile/Avatar update event - update user profiles in real-time
       socket.off('avatar-updated')
       socket.on('avatar-updated', (data) => {
@@ -1050,46 +1139,6 @@ const UserDashboard = () => {
             return msg
           }))
         }
-      })
-
-      // Group call events
-      socket.off('incoming-group-call')
-      socket.on('incoming-group-call', (data) => {
-        console.log('📞 Incoming group call received:', data)
-        toast.success(`Incoming group ${data.callType} call from ${data.initiator?.name || 'Unknown'}`, {
-          duration: 5000,
-          icon: '📞'
-        })
-        setIsIncomingGroupCall(true)
-        setGroupCallData({ 
-          callId: data.callId, 
-          callType: data.callType, 
-          groupId: data.groupId,
-          group: data.group,
-          initiator: data.initiator 
-        })
-        setShowGroupCallUI(true)
-      })
-
-      socket.off('group-call-initiated')
-      socket.on('group-call-initiated', (data) => {
-        console.log('📤 Group call initiated:', data)
-        setIsIncomingGroupCall(false)
-        setGroupCallData({ 
-          callId: data.callId, 
-          callType: data.callType, 
-          groupId: data.groupId,
-          group: data.group 
-        })
-        setShowGroupCallUI(true)
-      })
-
-      socket.off('group-call-error')
-      socket.on('group-call-error', (data) => {
-        console.error('❌ Group call error:', data)
-        toast.error(data.error || 'Group call failed', {
-          duration: 4000
-        })
       })
     }
   }
@@ -1454,6 +1503,9 @@ const UserDashboard = () => {
 
         // Add optimistic message immediately to UI
         setMessages(prev => [...prev, optimisticMessage])
+        
+        // Force scroll to bottom when sending message (WhatsApp behavior)
+        shouldScrollToBottomRef.current = true
 
         // Update last message immediately
         updateLastMessage(selectedChat.id, {
@@ -1489,6 +1541,9 @@ const UserDashboard = () => {
 
         // Add optimistic message immediately to UI
         setMessages(prev => [...prev, optimisticMessage])
+        
+        // Force scroll to bottom when sending message (WhatsApp behavior)
+        shouldScrollToBottomRef.current = true
 
         // Update last message immediately
         updateLastMessage(selectedChat.id, {
@@ -2237,16 +2292,25 @@ const UserDashboard = () => {
                     <>
                       <PhoneCall className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
                         if (!selectedChat || selectedChat.type !== 'group') return
-                        console.log('Initiating group call for:', selectedChat.id, selectedChat.name)
+                        console.log('🎤 Initiating group VOICE call for:', selectedChat.id, selectedChat.name)
                         try {
                           const res = await groupCallsAPI.initiate(selectedChat.id, 'voice')
                           const call = res.data?.data?.call
+                          
+                          console.log('🎤 ========================================')
+                          console.log('🎤 VOICE CALL INITIATED!')
+                          console.log('🎤 Call ID:', call._id)
+                          console.log('🎤 Room Name:', call.roomName)
+                          console.log('🎤 Group:', selectedChat.name)
+                          console.log('🎤 ========================================')
+                          
                           if (call && call._id) {
                             setIsIncomingGroupCall(false)
                             setGroupCallData({ 
                               callId: call._id, 
                               callType: 'voice', 
                               groupId: selectedChat.id,
+                              roomName: call.roomName, // ✅ Include roomName!
                               group: { name: selectedChat.name, avatar: selectedChat.profileImage }
                             })
                             setShowGroupCallUI(true)
@@ -2266,16 +2330,25 @@ const UserDashboard = () => {
                       }} />
                       <Video className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" onClick={async () => {
                         if (!selectedChat || selectedChat.type !== 'group') return
-                        console.log('Initiating group video call for:', selectedChat.id, selectedChat.name)
+                        console.log('🎥 Initiating group VIDEO call for:', selectedChat.id, selectedChat.name)
                         try {
                           const res = await groupCallsAPI.initiate(selectedChat.id, 'video')
                           const call = res.data?.data?.call
+                          
+                          console.log('🎥 ========================================')
+                          console.log('🎥 VIDEO CALL INITIATED!')
+                          console.log('🎥 Call ID:', call._id)
+                          console.log('🎥 Room Name:', call.roomName)
+                          console.log('🎥 Group:', selectedChat.name)
+                          console.log('🎥 ========================================')
+                          
                           if (call && call._id) {
                             setIsIncomingGroupCall(false)
                             setGroupCallData({ 
                               callId: call._id, 
                               callType: 'video', 
                               groupId: selectedChat.id,
+                              roomName: call.roomName, // ✅ CRITICAL: Include roomName!
                               group: { name: selectedChat.name, avatar: selectedChat.profileImage }
                             })
                             setShowGroupCallUI(true)
@@ -2319,7 +2392,7 @@ const UserDashboard = () => {
                             fetchMessages(oldestMessageId)
                           }
                         }}
-                        className="px-4 py-2 text-sm bg-blue-500 text-white rounded-full hover:bg-blue-600 transition-colors"
+                        className="px-5 py-2.5 text-sm bg-gradient-to-br from-blue-400 to-blue-600 text-white rounded-full shadow-[3px_3px_10px_rgba(59,130,246,0.4),inset_-1px_-1px_6px_rgba(0,0,0,0.1),inset_1px_1px_6px_rgba(255,255,255,0.2)] hover:shadow-[4px_4px_14px_rgba(59,130,246,0.5),inset_-1px_-1px_6px_rgba(0,0,0,0.15),inset_1px_1px_6px_rgba(255,255,255,0.25)] hover:-translate-y-0.5 transition-all duration-200 font-medium"
                       >
                         Load Previous Messages
                       </button>
@@ -2356,7 +2429,7 @@ const UserDashboard = () => {
                         {/* Date Separator */}
                         {showDateSeparator && (
                           <div className="flex justify-center my-4">
-                            <div className="bg-gray-200 text-gray-600 text-xs px-3 py-1 rounded-full">
+                            <div className="bg-gradient-to-br from-gray-200 to-gray-300 text-gray-700 text-xs px-4 py-2 rounded-full font-medium">
                               {formatMessageDate(message.createdAt || message.timestamp)}
                             </div>
                           </div>
@@ -2408,10 +2481,10 @@ const UserDashboard = () => {
 
                           {/* Message Bubble */}
                           <div
-                            className={`relative group flex flex-col px-3 py-2 rounded-lg ${
+                            className={`relative group flex flex-col px-4 py-3 rounded-2xl transition-all duration-200 ${
                               isCurrentUser
-                                ? 'bg-green-500 text-white rounded-br-none'
-                                : 'bg-gray-200 text-gray-900 rounded-bl-none'
+                                ? 'bg-gradient-to-br from-green-400 to-green-600 text-white rounded-br-md hover:-translate-y-0.5'
+                                : 'bg-gradient-to-br from-gray-100 to-gray-300 text-gray-900 rounded-bl-md hover:-translate-y-0.5'
                             } ${showActions && selectedMessage && (getMessageId(selectedMessage) === getMessageId(message)) ? 'ring-2 ring-blue-400' : ''}`}
                             onMouseDown={() => startLongPress(message)}
                             onMouseUp={cancelLongPress}
@@ -2934,8 +3007,63 @@ const UserDashboard = () => {
         </>
       )}
 
-      {/* Group Call UI */}
-      {showGroupCallUI && groupCallData && (
+      {/* Incoming Jitsi Call Notification */}
+      {showGroupCallUI && groupCallData && isIncomingGroupCall && groupCallData.callType === 'video' && (
+        <IncomingJitsiCall
+          callData={groupCallData}
+          onAccept={() => {
+            console.log('📞 ========================================')
+            console.log('📞 ACCEPTING INCOMING VIDEO CALL')
+            console.log('📞 Call ID:', groupCallData.callId)
+            console.log('📞 Room Name:', groupCallData.roomName)
+            console.log('📞 ========================================')
+            
+            setIsIncomingGroupCall(false)
+            
+            // Notify via socket for real-time updates (Jitsi handles participants internally)
+            if (socket && groupCallData?.callId) {
+              socket.emit('group-call-join', {
+                callId: groupCallData.callId,
+                groupId: groupCallData.groupId,
+              })
+              console.log('✅ Socket notified - Jitsi will handle participants')
+            }
+            
+            // Note: Backend API removed - Jitsi handles participant sync automatically
+            console.log('ℹ️ Using Jitsi internal participant sync (no backend API needed)')
+            
+            // Call will continue to show Jitsi component
+          }}
+          onDecline={() => {
+            setShowGroupCallUI(false)
+            setGroupCallData(null)
+            setIsIncomingGroupCall(false)
+            // Notify via socket that call was declined
+            if (socket && groupCallData?.callId) {
+              socket.emit('group-call-decline', {
+                callId: groupCallData.callId,
+                groupId: groupCallData.groupId,
+              })
+            }
+          }}
+        />
+      )}
+
+      {/* Group Call UI - Use Jitsi for video calls, WebRTC for voice calls */}
+      {showGroupCallUI && groupCallData && !isIncomingGroupCall && (
+        groupCallData.callType === 'video' ? (
+          // Use Jitsi Meet for video calls
+          <JitsiGroupCall
+            user={user}
+            callData={groupCallData}
+            onCallEnd={() => {
+              setShowGroupCallUI(false)
+              setGroupCallData(null)
+              setIsIncomingGroupCall(false)
+            }}
+          />
+        ) : (
+          // Use WebRTC for voice-only calls
         <GroupCallUI
           user={user}
           callData={groupCallData}
@@ -2954,6 +3082,7 @@ const UserDashboard = () => {
             setIsIncomingGroupCall(false)
           }}
         />
+        )
       )}
     </div>
   )

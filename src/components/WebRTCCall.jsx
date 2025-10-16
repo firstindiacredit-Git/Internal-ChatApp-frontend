@@ -298,6 +298,13 @@ const WebRTCCall = ({
 
       if (!isIncoming) {
         await createAndSendOffer();
+      } else {
+        // If this is an incoming call (from notification), request the caller to send offer
+        console.log('📞 Incoming call - requesting offer from caller');
+        socket.emit('call-request-offer', {
+          callId: callData.callId,
+          receiverId: user._id
+        });
       }
     } catch (error) {
       webrtcInitializedRef.current = false;
@@ -321,6 +328,7 @@ const WebRTCCall = ({
     socket.off('call-ended');
     socket.off('call-error');
     socket.off('call-offer');
+    socket.off('call-resend-offer');
     socket.off('ice-candidate');
 
     socket.on('call-answered', async (data) => {
@@ -407,6 +415,29 @@ const WebRTCCall = ({
 
     socket.on('call-error', (data) => {
       setError(data.error);
+    });
+
+    // Handle request to resend offer (when receiver rejoins from notification)
+    socket.on('call-resend-offer', async (data) => {
+      console.log('📞 Received request to resend offer:', data);
+      if (data.callId === callData.callId && !isIncoming && peerConnectionRef.current) {
+        try {
+          console.log('📞 Resending offer to receiver...');
+          const offer = peerConnectionRef.current.localDescription;
+          if (offer) {
+            socket.emit('call-offer', {
+              callId: callData.callId,
+              offer: offer,
+            });
+            console.log('📞 Offer resent successfully');
+          } else {
+            console.log('📞 No local description found, creating new offer...');
+            await createAndSendOffer();
+          }
+        } catch (error) {
+          console.error('📞 Error resending offer:', error);
+        }
+      }
     });
 
     socket.on('call-offer', async (data) => {

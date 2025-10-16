@@ -12,6 +12,10 @@ import GroupManagement from './pages/GroupManagement'
 import GroupProfile from './pages/GroupProfile'
 import Profile from './pages/Profile'
 import Forward from './pages/Forward'
+import DailyUpdate from './pages/DailyUpdate'
+import TaskManagement from './pages/TaskManagement'
+import ManageDailyUpdates from './pages/ManageDailyUpdates'
+import ManageTasks from './pages/ManageTasks'
 import LoadingSpinner from './components/LoadingSpinner'
 
 
@@ -133,6 +137,38 @@ function AppRoutes() {
               element={
                 <ProtectedRoute>
                   <Forward />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/daily-update" 
+              element={
+                <ProtectedRoute>
+                  <DailyUpdate />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/tasks" 
+              element={
+                <ProtectedRoute>
+                  <TaskManagement />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/manage-daily-updates" 
+              element={
+                <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                  <ManageDailyUpdates />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/manage-tasks" 
+              element={
+                <ProtectedRoute allowedRoles={['superadmin', 'admin']}>
+                  <ManageTasks />
                 </ProtectedRoute>
               } 
             />

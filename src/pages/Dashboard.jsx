@@ -140,6 +140,136 @@ const Dashboard = () => {
     }
   }, [socket])
 
+  // Listen for push notification clicks from service worker
+  useEffect(() => {
+    const handleServiceWorkerMessage = (event) => {
+      console.log('🔔 Dashboard - Received Service Worker Message:', event.data)
+      const message = event.data
+      
+      if (!message || !message.type) {
+        console.warn('Dashboard - Invalid message received from service worker')
+        return
+      }
+      
+      if (message.type === 'notification-clicked' || message.type === 'answer-call') {
+        console.log('🔔 Dashboard - Processing notification click/answer:', message.type)
+        const notificationData = message.data
+        
+        if (!notificationData) {
+          console.warn('Dashboard - No notification data found')
+          return
+        }
+        
+        // Handle incoming call notifications
+        if (notificationData.type === 'incoming-call') {
+          console.log('📞 Dashboard - Showing incoming call UI from notification click')
+          console.log('Dashboard - Call data:', notificationData)
+          
+          // Fetch call details and show UI
+          const callDataObj = {
+            callId: notificationData.callId,
+            callType: notificationData.callType || 'voice',
+            caller: {
+              _id: notificationData.senderId,
+              name: notificationData.senderName,
+              profileImage: notificationData.senderImage
+            }
+          }
+          
+          console.log('Dashboard - Setting call UI with data:', callDataObj)
+          setIsIncomingCall(true)
+          setCallData(callDataObj)
+          setShowCallUI(true)
+          
+          toast.success(`Incoming ${callDataObj.callType} call from ${callDataObj.caller.name}`, {
+            duration: 5000,
+            icon: '📞'
+          })
+        }
+        
+        // Handle incoming group call notifications
+        else if (notificationData.type === 'incoming-group-call') {
+          console.log('📞 Dashboard - Showing incoming group call UI from notification click')
+          console.log('Dashboard - Group call data:', notificationData)
+          
+          const groupCallDataObj = {
+            callId: notificationData.callId,
+            callType: notificationData.callType || 'voice',
+            groupId: notificationData.groupId,
+            roomName: notificationData.roomName,
+            group: {
+              _id: notificationData.groupId,
+              name: notificationData.groupName
+            },
+            initiator: {
+              _id: notificationData.senderId,
+              name: notificationData.senderName,
+              profileImage: notificationData.senderImage
+            }
+          }
+          
+          console.log('Dashboard - Setting group call UI with data:', groupCallDataObj)
+          setIsIncomingGroupCall(true)
+          setGroupCallData(groupCallDataObj)
+          setShowGroupCallUI(true)
+          
+          toast.success(`Incoming group ${groupCallDataObj.callType} call from ${groupCallDataObj.initiator.name}`, {
+            duration: 5000,
+            icon: '📞'
+          })
+        }
+      }
+      
+      // Handle decline call from notification
+      else if (message.type === 'decline-call') {
+        console.log('❌ Declining call from notification')
+        setShowCallUI(false)
+        setShowGroupCallUI(false)
+        setCallData(null)
+        setGroupCallData(null)
+      }
+    }
+    
+    console.log('📡 Dashboard - Setting up service worker message listener')
+    
+    // Add event listener for service worker messages
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage)
+      console.log('✅ Dashboard - Service worker message listener attached')
+    } else {
+      console.warn('⚠️ Dashboard - Service worker not available')
+    }
+    
+    // Check URL parameters for notification data (when opening in new tab)
+    const urlParams = new URLSearchParams(window.location.search)
+    const notificationDataParam = urlParams.get('notificationData')
+    
+    if (notificationDataParam) {
+      console.log('📎 Dashboard - Found notification data in URL')
+      try {
+        const decoded = atob(notificationDataParam)
+        const message = JSON.parse(decoded)
+        console.log('🔔 Dashboard - Notification data from URL:', message)
+        
+        // Process the notification data
+        handleServiceWorkerMessage({ data: message })
+        
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname)
+      } catch (error) {
+        console.error('Dashboard - Error parsing notification data from URL:', error)
+      }
+    }
+    
+    // Cleanup
+    return () => {
+      console.log('🧹 Dashboard - Removing service worker message listener')
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage)
+      }
+    }
+  }, [])
+
   // Close notification panel when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -496,6 +626,20 @@ const Dashboard = () => {
                     Manage Groups
                   </a>
                 )}
+                <a
+                  href="/manage-daily-updates"
+                  className="btn-secondary w-full inline-flex items-center justify-center"
+                >
+                  <MessageCircle className="w-4 h-4 mr-2" />
+                  Manage Daily Updates
+                </a>
+                <a
+                  href="/manage-tasks"
+                  className="btn-primary w-full inline-flex items-center justify-center"
+                >
+                  <Shield className="w-4 h-4 mr-2" />
+                  Manage Tasks
+                </a>
               </div>
             </div>
           )}

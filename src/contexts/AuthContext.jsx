@@ -1,5 +1,7 @@
 import { createContext, useContext, useState, useEffect } from 'react'
 import { authAPI } from '../services/api'
+import { initializePushNotifications } from '../services/pushNotifications'
+import { initializeFCM } from '../services/fcmNotifications'
 
 const AuthContext = createContext()
 
@@ -21,6 +23,27 @@ export const AuthProvider = ({ children }) => {
       authAPI.getCurrentUser()
         .then(response => {
           setUser(response.data.user)
+          
+          // Initialize push notifications - try FCM first, fallback to Web Push
+          if (response.data.user?._id) {
+            initializeFCM(response.data.user._id)
+              .then(result => {
+                if (result.success) {
+                  console.log('✅ FCM initialized')
+                } else {
+                  console.log('ℹ️ FCM failed, trying Web Push...')
+                  return initializePushNotifications(response.data.user._id)
+                }
+              })
+              .then(result => {
+                if (result && result.success) {
+                  console.log('✅ Web Push initialized')
+                }
+              })
+              .catch(error => {
+                console.log('ℹ️ Notifications failed:', error)
+              })
+          }
         })
         .catch(error => {
           console.error('Auth check failed:', error)
@@ -41,6 +64,27 @@ export const AuthProvider = ({ children }) => {
       
       localStorage.setItem('token', token)
       setUser(userData)
+      
+      // Initialize push notifications - try FCM first, fallback to Web Push
+      if (userData?._id) {
+        initializeFCM(userData._id)
+          .then(result => {
+            if (result.success) {
+              console.log('✅ FCM enabled')
+            } else {
+              console.log('ℹ️ FCM failed, trying Web Push...')
+              return initializePushNotifications(userData._id)
+            }
+          })
+          .then(result => {
+            if (result && result.success) {
+              console.log('✅ Web Push enabled')
+            }
+          })
+          .catch(error => {
+            console.log('ℹ️ Notifications failed:', error)
+          })
+      }
       
       return { success: true, data: response.data }
     } catch (error) {

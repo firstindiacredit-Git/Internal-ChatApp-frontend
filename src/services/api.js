@@ -95,6 +95,11 @@ export const groupsAPI = {
     api.post(`/groups/${groupId}/avatar`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
     }),
+  pinMessage: (groupId, messageId) =>
+    api.post(`/groups/${groupId}/pin-message`, { messageId }),
+  unpinMessage: (groupId, messageId) =>
+    api.post(`/groups/${groupId}/unpin-message`, { messageId }),
+  getPinnedMessages: (groupId) => api.get(`/groups/${groupId}/pinned-messages`),
 };
 
 // Messages API

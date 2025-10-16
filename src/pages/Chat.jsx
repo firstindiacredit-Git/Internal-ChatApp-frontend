@@ -24,7 +24,9 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  ArrowLeft
+  ArrowLeft,
+  Pin,
+  PinOff
 } from 'lucide-react'
 import WebRTCCall from '../components/WebRTCCall';
 import WebRTCAudioCall from '../components/WebRTCAudioCall';
@@ -87,6 +89,18 @@ const Chat = () => {
   const [imageZoom, setImageZoom] = useState(1) // For image zoom level
   const [imagePosition, setImagePosition] = useState({ x: 0, y: 0 }) // For image pan position
   const [isDragging, setIsDragging] = useState(false) // For drag state
+  const [messageContextMenu, setMessageContextMenu] = useState(null) // For message right-click context menu
+  const [pinnedMessages, setPinnedMessages] = useState([]) // For pinned messages in group
+  const [showPinnedMessages, setShowPinnedMessages] = useState(false) // Toggle pinned messages section
+  const [contextMenu, setContextMenu] = useState(null) // For right-click context menu { x, y, chat }
+  const [pinnedChats, setPinnedChats] = useState(() => {
+    try {
+      const saved = localStorage.getItem('pinnedChats')
+      return saved ? JSON.parse(saved) : []
+    } catch {
+      return []
+    }
+  })
 
   // Image zoom functions
   const handleZoomIn = () => {
@@ -283,6 +297,68 @@ const Chat = () => {
         handleForwardMessage(message)
         break
     }
+  }
+
+  // Fetch pinned messages for current group
+  const fetchPinnedMessages = async (groupId) => {
+    try {
+      const response = await groupsAPI.getPinnedMessages(groupId)
+      setPinnedMessages(response.data.pinnedMessages || [])
+    } catch (error) {
+      console.error('Error fetching pinned messages:', error)
+    }
+  }
+
+  // Pin/Unpin message handler
+  const togglePinMessage = async (message, e) => {
+    if (e) e.stopPropagation()
+    
+    if (!selectedChat || selectedChat.type !== 'group') {
+      toast.error('You can only pin messages in groups')
+      return
+    }
+
+    try {
+      const isPinned = pinnedMessages.some(pm => pm._id === message._id || pm.id === message._id)
+      
+      if (isPinned) {
+        // Unpin message
+        await groupsAPI.unpinMessage(selectedChat.id, message._id || message.id)
+        setPinnedMessages(prev => prev.filter(pm => (pm._id || pm.id) !== (message._id || message.id)))
+        toast.success('Message unpinned')
+      } else {
+        // Pin message
+        await groupsAPI.pinMessage(selectedChat.id, message._id || message.id)
+        // Add the message to pinned messages
+        setPinnedMessages(prev => [...prev, message])
+        toast.success('Message pinned')
+      }
+    } catch (error) {
+      console.error('Error toggling pin message:', error)
+      toast.error(error.response?.data?.message || 'Failed to pin/unpin message')
+    }
+  }
+
+  // Handle pin/unpin chat
+  const togglePinChat = (chatType, chatId, e) => {
+    e.stopPropagation() // Prevent chat selection
+    const chatKey = `${chatType}-${chatId}`
+    
+    setPinnedChats(prev => {
+      let newPinned
+      if (prev.includes(chatKey)) {
+        // Unpin
+        newPinned = prev.filter(key => key !== chatKey)
+        toast.success('Chat unpinned')
+      } else {
+        // Pin
+        newPinned = [...prev, chatKey]
+        toast.success('Chat pinned')
+      }
+      // Save to localStorage
+      localStorage.setItem('pinnedChats', JSON.stringify(newPinned))
+      return newPinned
+    })
   }
 
   const handleCopyMessage = async (message) => {
@@ -567,6 +643,169 @@ const Chat = () => {
     }
   }, [socket])
 
+  // Listen for push notification clicks from service worker
+  useEffect(() => {
+    const handleServiceWorkerMessage = (event) => {
+      console.log('🔔 Chat Page - Received Service Worker Message:', event.data)
+      const message = event.data
+      
+      if (!message || !message.type) {
+        console.warn('Invalid message received from service worker')
+        return
+      }
+      
+      if (message.type === 'notification-clicked' || message.type === 'answer-call') {
+        console.log('🔔 Processing notification click/answer:', message.type)
+        const notificationData = message.data
+        
+        if (!notificationData) {
+          console.warn('No notification data found')
+          return
+        }
+        
+        // Handle incoming call notifications
+        if (notificationData.type === 'incoming-call') {
+          console.log('📞 Showing incoming call UI from notification click')
+          console.log('Call data:', notificationData)
+          
+          // Fetch call details and show UI
+          const callDataObj = {
+            callId: notificationData.callId,
+            callType: notificationData.callType || 'voice',
+            caller: {
+              _id: notificationData.senderId,
+              name: notificationData.senderName,
+              profileImage: notificationData.senderImage
+            }
+          }
+          
+          console.log('Setting call UI with data:', callDataObj)
+          setIsIncomingCall(true)
+          setCallData(callDataObj)
+          setShowCallUI(true)
+          
+          toast.success(`Incoming ${callDataObj.callType} call from ${callDataObj.caller.name}`, {
+            duration: 5000,
+            icon: '📞'
+          })
+        }
+        
+        // Handle incoming group call notifications
+        else if (notificationData.type === 'incoming-group-call') {
+          console.log('📞 Showing incoming group call UI from notification click')
+          console.log('Group call data:', notificationData)
+          
+          const groupCallDataObj = {
+            callId: notificationData.callId,
+            callType: notificationData.callType || 'voice',
+            groupId: notificationData.groupId,
+            roomName: notificationData.roomName,
+            group: {
+              _id: notificationData.groupId,
+              name: notificationData.groupName
+            },
+            initiator: {
+              _id: notificationData.senderId,
+              name: notificationData.senderName,
+              profileImage: notificationData.senderImage
+            }
+          }
+          
+          console.log('Setting group call UI with data:', groupCallDataObj)
+          setIsIncomingGroupCall(true)
+          setGroupCallData(groupCallDataObj)
+          setShowGroupCallUI(true)
+          
+          toast.success(`Incoming group ${groupCallDataObj.callType} call from ${groupCallDataObj.initiator.name}`, {
+            duration: 5000,
+            icon: '📞'
+          })
+        }
+      }
+      
+      // Handle decline call from notification
+      else if (message.type === 'decline-call') {
+        console.log('❌ Declining call from notification')
+        setShowCallUI(false)
+        setShowGroupCallUI(false)
+        setCallData(null)
+        setGroupCallData(null)
+      }
+    }
+    
+    console.log('📡 Setting up service worker message listener')
+    
+    // Add event listener for service worker messages
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage)
+      console.log('✅ Service worker message listener attached')
+    } else {
+      console.warn('⚠️ Service worker not available')
+    }
+    
+    // Check URL parameters for notification data (when opening in new tab)
+    const urlParams = new URLSearchParams(window.location.search)
+    const notificationDataParam = urlParams.get('notificationData')
+    
+    if (notificationDataParam) {
+      console.log('📎 Found notification data in URL')
+      try {
+        const decoded = atob(notificationDataParam)
+        const message = JSON.parse(decoded)
+        console.log('🔔 Notification data from URL:', message)
+        
+        // Process the notification data
+        handleServiceWorkerMessage({ data: message })
+        
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname)
+      } catch (error) {
+        console.error('Error parsing notification data from URL:', error)
+      }
+    }
+    
+    // Cleanup
+    return () => {
+      console.log('🧹 Removing service worker message listener')
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage)
+      }
+    }
+  }, [])
+
+  // Close context menus on scroll or escape key
+  useEffect(() => {
+    const handleScroll = () => {
+      setMessageContextMenu(null)
+      setContextMenu(null)
+    }
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setMessageContextMenu(null)
+        setContextMenu(null)
+      }
+    }
+    
+    if (messageContextMenu || contextMenu) {
+      window.addEventListener('scroll', handleScroll, true)
+      window.addEventListener('keydown', handleKeyDown)
+      return () => {
+        window.removeEventListener('scroll', handleScroll, true)
+        window.removeEventListener('keydown', handleKeyDown)
+      }
+    }
+  }, [messageContextMenu, contextMenu])
+
+  // Auto-scroll to bottom when messages change or chat is opened
+  useEffect(() => {
+    if (messages.length > 0) {
+      // Small delay to ensure DOM is updated
+      setTimeout(() => {
+        scrollToBottom()
+      }, 100)
+    }
+  }, [messages, selectedChat])
+
   useEffect(() => {
     if (selectedChat) {
       // Clear messages immediately when switching chats to prevent wrong messages showing
@@ -581,8 +820,11 @@ const Chat = () => {
       // Join group room if it's a group chat
       if (selectedChat.type === 'group') {
         joinGroup(selectedChat.id)
+        fetchPinnedMessages(selectedChat.id) // Fetch pinned messages for group
         console.log('🏠 Joined group room for:', selectedChat.name)
       } else {
+        // Clear pinned messages when switching to personal chat
+        setPinnedMessages([])
         // Leave group room if switching from group chat
         // Note: This is not a perfect cleanup since we don't track previous group
         // but helps ensure room cleanliness
@@ -1611,7 +1853,17 @@ const Chat = () => {
       lastMessage: lastMessages[group.id] || null
     }))
   ].sort((a, b) => {
-    // Sort by most recent message timestamp (WhatsApp style)
+    // First, check if chats are pinned
+    const aKey = `${a.type}-${a.id}`
+    const bKey = `${b.type}-${b.id}`
+    const aIsPinned = pinnedChats.includes(aKey)
+    const bIsPinned = pinnedChats.includes(bKey)
+
+    // Pinned chats come first
+    if (aIsPinned && !bIsPinned) return -1
+    if (!aIsPinned && bIsPinned) return 1
+
+    // If both are pinned or both unpinned, sort by most recent message timestamp (WhatsApp style)
     const aTime = a.lastMessage?.timestamp ? new Date(a.lastMessage.timestamp).getTime() : 0
     const bTime = b.lastMessage?.timestamp ? new Date(b.lastMessage.timestamp).getTime() : 0
     return bTime - aTime // Most recent first
@@ -1794,6 +2046,14 @@ const Chat = () => {
                           });
                         }
                       }}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        setContextMenu({
+                          x: e.clientX,
+                          y: e.clientY,
+                          chat: chat
+                        })
+                      }}
                 className={`p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 ${
                         selectedChat?.id === chat.id && selectedChat?.type === chat.type
                     ? 'bg-green-50' 
@@ -1858,7 +2118,11 @@ const Chat = () => {
                         )}
                        
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
+                        {/* Pinned indicator (read-only) */}
+                        {pinnedChats.includes(`${chat.type}-${chat.id}`) && (
+                          <Pin className="w-3 h-3 text-gray-400 fill-gray-400" />
+                        )}
                         <span className="text-xs text-gray-500">
                           {chat.lastMessage?.timestamp ? formatChatDate(chat.lastMessage.timestamp) : ''}
                         </span>
@@ -1924,6 +2188,102 @@ const Chat = () => {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <>
+            <div 
+              className="fixed inset-0 z-40" 
+              onClick={() => setContextMenu(null)}
+            />
+            <div 
+              className="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[180px]"
+              style={{ 
+                top: `${contextMenu.y}px`, 
+                left: `${contextMenu.x}px` 
+              }}
+            >
+              <button
+                onClick={(e) => {
+                  togglePinChat(contextMenu.chat.type, contextMenu.chat.id, e)
+                  setContextMenu(null)
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-3"
+              >
+                {pinnedChats.includes(`${contextMenu.chat.type}-${contextMenu.chat.id}`) ? (
+                  <>
+                    <PinOff className="w-4 h-4" />
+                    Unpin Chat
+                  </>
+                ) : (
+                  <>
+                    <Pin className="w-4 h-4" />
+                    Pin Chat
+                  </>
+                )}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Message Context Menu */}
+        {messageContextMenu && (
+          <>
+            <div 
+              className="fixed inset-0 z-40" 
+              onClick={() => setMessageContextMenu(null)}
+            />
+            <div 
+              className="fixed z-50 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[180px]"
+              style={{ 
+                top: `${messageContextMenu.y}px`, 
+                left: `${messageContextMenu.x}px` 
+              }}
+            >
+              <button
+                onClick={() => {
+                  handleDropdownAction('copy', messageContextMenu.message)
+                  setMessageContextMenu(null)
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-3"
+              >
+                <Copy className="w-4 h-4" />
+                Copy
+              </button>
+              <button
+                onClick={() => {
+                  handleDropdownAction('forward', messageContextMenu.message)
+                  setMessageContextMenu(null)
+                }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-3"
+              >
+                <Forward className="w-4 h-4" />
+                Forward
+              </button>
+              {selectedChat?.type === 'group' && (
+                <button
+                  onClick={(e) => {
+                    togglePinMessage(messageContextMenu.message, e)
+                    setMessageContextMenu(null)
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors flex items-center gap-3"
+                >
+                  {pinnedMessages.some(pm => (pm._id || pm.id) === (messageContextMenu.message._id || messageContextMenu.message.id)) ? (
+                    <>
+                      <PinOff className="w-4 h-4" />
+                      Unpin Message
+                    </>
+                  ) : (
+                    <>
+                      <Pin className="w-4 h-4" />
+                      Pin Message
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </>
         )}
 
         {/* Image Preview Modal */}
@@ -2304,6 +2664,84 @@ const Chat = () => {
                 </div>
               </div>
 
+              {/* Pinned Messages Section (Only for Groups) */}
+              {selectedChat.type === 'group' && pinnedMessages.length > 0 && (
+                <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <Pin className="w-4 h-4 text-yellow-600" />
+                      <span className="text-sm font-medium text-yellow-800">
+                        {pinnedMessages.length} Pinned Message{pinnedMessages.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setShowPinnedMessages(!showPinnedMessages)}
+                      className="text-xs text-yellow-700 hover:text-yellow-900 font-medium"
+                    >
+                      {showPinnedMessages ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  {showPinnedMessages && (
+                    <div className="mt-2 space-y-2 max-h-48 overflow-y-auto">
+                      {pinnedMessages.map((msg) => (
+                        <div
+                          key={msg._id || msg.id}
+                          className="bg-white rounded-lg p-3 border border-yellow-200 shadow-sm hover:shadow-md transition-shadow cursor-pointer relative group"
+                          onClick={() => {
+                            // Scroll to the pinned message in the chat
+                            const messageElement = document.getElementById(`message-${msg._id || msg.id}`)
+                            if (messageElement) {
+                              messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                              messageElement.classList.add('ring-2', 'ring-blue-400')
+                              setTimeout(() => {
+                                messageElement.classList.remove('ring-2', 'ring-blue-400')
+                              }, 2000)
+                            }
+                          }}
+                        >
+                          <div className="flex items-start gap-2">
+                            <div className="flex-shrink-0 w-7 h-7 rounded-full overflow-hidden bg-gray-200">
+                              {msg.sender?.profileImage ? (
+                                <img
+                                  src={`${API_ORIGIN}${msg.sender.profileImage}`}
+                                  alt={msg.sender?.name || 'User'}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-blue-500 flex items-center justify-center">
+                                  <span className="text-white text-xs font-medium">
+                                    {(msg.sender?.name || 'U').charAt(0).toUpperCase()}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-gray-700">
+                                {msg.sender?.name || 'User'}
+                              </p>
+                              <p className="text-sm text-gray-800 truncate">
+                                {msg.message || (msg.fileUrl ? '📎 File attachment' : 'No content')}
+                              </p>
+                            </div>
+                            {/* Unpin button */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation() // Prevent scrolling to message
+                                togglePinMessage(msg, e)
+                              }}
+                              className="flex-shrink-0 p-1.5 rounded-full bg-red-100 hover:bg-red-200 text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                              title="Unpin message"
+                            >
+                              <PinOff className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Messages Area */}
               <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
                 <div className="max-w-8xl mx-auto">
@@ -2369,6 +2807,7 @@ const Chat = () => {
                         )}
                         
                         <div
+                          id={`message-${message._id || message.id}`}
                           className={`flex ${
                             isCurrentUser ? 'justify-end' : 'justify-start'
                           } mb-4`}
@@ -2424,7 +2863,19 @@ const Chat = () => {
                             onMouseLeave={cancelLongPress}
                             onTouchStart={() => startLongPress(message)}
                             onTouchEnd={cancelLongPress}
-                            onContextMenu={(e) => { e.preventDefault(); setSelectedMessage(message); setShowActions(true); }}
+                            onContextMenu={(e) => { 
+                              e.preventDefault(); 
+                              setSelectedMessage(message); 
+                              setShowActions(true);
+                              // Show message context menu for groups
+                              if (selectedChat?.type === 'group') {
+                                setMessageContextMenu({
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                  message: message
+                                });
+                              }
+                            }}
                           >
                             {/* Dropdown button for text messages */}
                             {message.messageType === 'text' && (
@@ -2443,7 +2894,7 @@ const Chat = () => {
 
                                 {/* Dropdown menu for text messages */}
                                 {messageDropdown === getMessageId(message) && (
-                                  <div className="message-dropdown-container absolute top-8 right-1 z-20 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]">
+                                  <div className="message-dropdown-container absolute bottom-full right-1 mb-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[120px]">
                                     <button
                                       onClick={() => handleDropdownAction('copy', message)}
                                       className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
@@ -2471,6 +2922,27 @@ const Chat = () => {
                                       <Forward className="w-4 h-4" />
                                       Forward
                                     </button>
+                                    {selectedChat?.type === 'group' && (
+                                      <button
+                                        onClick={() => {
+                                          togglePinMessage(message)
+                                          setMessageDropdown(null)
+                                        }}
+                                        className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2"
+                                      >
+                                        {pinnedMessages.some(pm => (pm._id || pm.id) === (message._id || message.id)) ? (
+                                          <>
+                                            <PinOff className="w-4 h-4" />
+                                            Unpin
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Pin className="w-4 h-4" />
+                                            Pin
+                                          </>
+                                        )}
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                               </>
@@ -2745,7 +3217,7 @@ const Chat = () => {
                                   </div>
                                 </div>
                               ) : (
-                                <p className="text-sm mb-1 break-words">
+                                <p className="text-sm mb-1 break-words whitespace-pre-wrap">
                                   {message.message}
                                   {(message.isEdited || message.editedAt) && (
                                     <span className="text-xs opacity-75 ml-1">(edited)</span>
@@ -2856,12 +3328,51 @@ const Chat = () => {
                   </button>
                   
                   <div className="flex-1 relative">
-                    <input
-                      type="text"
+                    <textarea
                       value={newMessage}
                       onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          if ((newMessage.trim() || selectedFile) && !isUploading) {
+                            sendMessage(e);
+                          }
+                        }
+                      }}
+                      onPaste={(e) => {
+                        // Handle image paste from clipboard
+                        const items = e.clipboardData?.items
+                        if (!items) return
+
+                        for (let i = 0; i < items.length; i++) {
+                          const item = items[i]
+                          
+                          // Check if pasted item is an image
+                          if (item.type.indexOf('image') !== -1) {
+                            e.preventDefault() // Prevent default paste
+                            const file = item.getAsFile()
+                            
+                            if (file) {
+                              // Set the file directly (same as file upload)
+                              setSelectedFile(file)
+                              
+                              // Create preview
+                              const reader = new FileReader()
+                              reader.onload = (event) => {
+                                setFilePreview(event.target.result)
+                              }
+                              reader.readAsDataURL(file)
+                              
+                              toast.success('Image pasted! Ready to send')
+                            }
+                            break
+                          }
+                        }
+                      }}
                       placeholder="Type a message"
-                      className="w-full py-2 px-4 bg-gray-100 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                      rows={1}
+                      className="w-full py-2 px-4 bg-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-green-400 resize-none overflow-y-auto max-h-32"
+                      style={{ minHeight: '40px', whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}
                     />
                   </div>
                   

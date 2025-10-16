@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import { config } from '../config';
 import { toast } from 'react-hot-toast';
+import { initializePushNotifications } from '../services/pushNotifications';
+import { initializeFCM } from '../services/fcmNotifications';
 
 const SocketContext = createContext();
 
@@ -20,6 +22,49 @@ export const SocketProvider = ({ children, user }) => {
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [lastPingTime, setLastPingTime] = useState(Date.now());
   const [notifications, setNotifications] = useState([]);
+
+  // Initialize push notifications (FCM + Web Push)
+  const initializeNotifications = async (userId) => {
+    try {
+      console.log('🔔 Starting push notification initialization...');
+      
+      // Check notification permission first
+      if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
+        console.warn('⚠️ Notification permission is denied. Skipping push notification setup.');
+        toast('Enable notifications in browser settings to receive alerts when offline', {
+          icon: '🔔',
+          duration: 5000,
+        });
+        return;
+      }
+      
+      // Try FCM first
+      console.log('🔔 Attempting FCM registration...');
+      const fcmResult = await initializeFCM(userId);
+      
+      if (fcmResult.success) {
+        console.log('✅ Push notifications initialized (FCM)');
+        
+        return;
+      }
+      
+      // Fallback to Web Push if FCM fails
+      console.log('🔔 FCM failed, trying Web Push...');
+      const webPushResult = await initializePushNotifications(userId);
+      
+      if (webPushResult.success) {
+        console.log('✅ Push notifications initialized (Web Push)');
+       
+      } else {
+        console.warn('⚠️ Push notifications not initialized:', webPushResult.error);
+        if (webPushResult.error.includes('permission')) {
+         
+        }
+      }
+    } catch (error) {
+      console.error('❌ Push notification initialization error:', error);
+    }
+  };
 
   // Handle admin notifications
   const handleAdminNotification = (data) => {
@@ -130,6 +175,36 @@ export const SocketProvider = ({ children, user }) => {
         newSocket.emit('join', user.id);
         console.log(`🏠 User ${user.id} joined personal room`);
         
+        // Initialize push notifications
+        initializeNotifications(user.id);
+        
+        // Listen for service worker messages (for inline reply)
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.addEventListener('message', (event) => {
+            console.log('📨 Service worker message received:', event.data);
+            
+            if (event.data.type === 'send-reply') {
+              const { replyText, receiver, sender } = event.data.data;
+              console.log('💬 Sending reply from notification:', replyText);
+              
+              // Send the reply message via socket
+              newSocket.emit('send-message', {
+                receiver: receiver,
+                message: replyText,
+                messageType: 'text',
+                sender: sender,
+                timestamp: new Date().toISOString(),
+              });
+              
+              // Show confirmation toast
+              toast.success('💬 Reply sent!', {
+                duration: 2000,
+                position: 'top-right',
+              });
+            }
+          });
+        }
+        
         startPingMonitoring(newSocket);
         startHeartbeat(newSocket);
       });
@@ -220,6 +295,64 @@ export const SocketProvider = ({ children, user }) => {
         handleAdminNotification(data);
       });
 
+      // Handle task notifications (task assignment, comments, etc.)
+      newSocket.on('task_notification', (data) => {
+        console.log('📋 Task notification received:', data);
+        
+        // Show toast notification based on task notification type
+        const getNotificationMessage = () => {
+          switch(data.type) {
+            case 'task_assigned':
+              return `📋 New Task: ${data.taskTitle}\n${data.assignedBy} assigned you a ${data.taskPriority} priority task`;
+            case 'task_comment':
+              return `💬 ${data.commentedBy} commented on: ${data.taskTitle}`;
+            case 'task_status_update':
+              return `🔄 Task "${data.taskTitle}" status updated to: ${data.newStatus}`;
+            default:
+              return data.message || 'New task notification';
+          }
+        };
+
+        const getToastIcon = () => {
+          switch(data.type) {
+            case 'task_assigned':
+              return data.taskPriority === 'high' ? '🔴' : data.taskPriority === 'low' ? '🟢' : '🟡';
+            case 'task_comment':
+              return '💬';
+            case 'task_status_update':
+              return '🔄';
+            default:
+              return '📋';
+          }
+        };
+
+        toast(getNotificationMessage(), {
+          icon: getToastIcon(),
+          duration: 5000,
+          position: 'top-right',
+          style: {
+            background: '#f3f4f6',
+            color: '#1f2937',
+            border: '1px solid #e5e7eb',
+            fontSize: '14px',
+            padding: '12px 16px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+            whiteSpace: 'pre-line',
+            maxWidth: '400px',
+          },
+        });
+
+        // Play notification sound if user has permission
+        try {
+          const audio = new Audio('/notification.mp3');
+          audio.volume = 0.5;
+          audio.play().catch(e => console.log('Audio play failed:', e));
+        } catch (e) {
+          console.log('Notification sound failed:', e);
+        }
+      });
+
       // User online/offline events
       newSocket.on('user-online', (data) => {
         console.log('🟢 User came online:', data.user?.name);
@@ -263,11 +396,44 @@ export const SocketProvider = ({ children, user }) => {
 
       setSocket(newSocket);
 
+      // Handle page visibility changes (tab switch, minimize)
+      const handleVisibilityChange = () => {
+        if (document.hidden) {
+          console.log('📱 User left tab - marking as away');
+          // Don't disconnect, just let server know user is away
+          if (newSocket && newSocket.connected) {
+            newSocket.emit('user-away', { userId: user.id });
+          }
+        } else {
+          console.log('📱 User returned to tab - marking as active');
+          if (newSocket && newSocket.connected) {
+            newSocket.emit('user-active', { userId: user.id });
+          }
+        }
+      };
+
+      // Handle tab/window close
+      const handleBeforeUnload = () => {
+        console.log('🚪 User closing tab/window - disconnecting immediately');
+        if (newSocket && newSocket.connected) {
+          newSocket.emit('force-disconnect', { userId: user.id });
+          newSocket.disconnect();
+        }
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('beforeunload', handleBeforeUnload);
+
       // Cleanup on unmount
       return () => {
         console.log('🧹 Cleaning up socket connection');
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('beforeunload', handleBeforeUnload);
         stopPingMonitoring();
         stopHeartbeat();
+        if (newSocket && newSocket.connected) {
+          newSocket.emit('force-disconnect', { userId: user.id });
+        }
         newSocket.close();
         setSocket(null);
         setIsConnected(false);

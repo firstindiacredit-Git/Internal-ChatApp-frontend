@@ -34,6 +34,7 @@ import GroupCallUI from '../components/GroupCallUI';
 import JitsiGroupCall from '../components/JitsiGroupCall';
 import IncomingJitsiCall from '../components/IncomingJitsiCall';
 import { callsAPI, groupCallsAPI } from '../services/api'
+import EmojiPicker from 'emoji-picker-react'
 
 const Chat = () => {
   const { user } = useAuth()
@@ -67,6 +68,7 @@ const Chat = () => {
   const [selectedFile, setSelectedFile] = useState(null)
   const [filePreview, setFilePreview] = useState(null)
   const [showFileOptions, setShowFileOptions] = useState(false)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState({})
   const [uploadProgress, setUploadProgress] = useState(0) // Track upload progress
   const [isUploading, setIsUploading] = useState(false) // Track if file is uploading
@@ -1674,11 +1676,14 @@ const Chat = () => {
     }
   }
 
-  // Close file options and message dropdowns when clicking outside
+  // Close file options, emoji picker and message dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (showFileOptions && !event.target.closest('.file-options-container')) {
         setShowFileOptions(false)
+      }
+      if (showEmojiPicker && !event.target.closest('.emoji-picker-container')) {
+        setShowEmojiPicker(false)
       }
       if (messageDropdown && !event.target.closest('.message-dropdown-container')) {
         setMessageDropdown(null)
@@ -1689,7 +1694,7 @@ const Chat = () => {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showFileOptions, messageDropdown])
+  }, [showFileOptions, showEmojiPicker, messageDropdown])
 
   const sendMessage = async (e) => {
     e.preventDefault()
@@ -2659,8 +2664,6 @@ const Chat = () => {
                       }} />
                     </>
                   )}
-                 
-                  <MoreVertical className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" />
                 </div>
               </div>
 
@@ -3317,6 +3320,20 @@ const Chat = () => {
 
               {/* Message Input */}
               <div className="bg-white border-t border-gray-200 p-4 relative">
+                {/* Emoji Picker Modal */}
+                {showEmojiPicker && (
+                  <div className="emoji-picker-container absolute bottom-16 right-4 z-50">
+                    <EmojiPicker
+                      onEmojiClick={(emojiData) => {
+                        setNewMessage(prev => prev + emojiData.emoji)
+                        setShowEmojiPicker(false)
+                      }}
+                      width={350}
+                      height={400}
+                    />
+                  </div>
+                )}
+
                 <form onSubmit={sendMessage} className="flex items-center space-x-3">
                   <button
                     type="button"
@@ -3375,6 +3392,15 @@ const Chat = () => {
                       style={{ minHeight: '40px', whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}
                     />
                   </div>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                    className="p-2 text-gray-500 hover:text-gray-700"
+                    title="Emoji"
+                  >
+                    <span className="text-2xl">😊</span>
+                  </button>
                   
                     <button
                       type="submit"

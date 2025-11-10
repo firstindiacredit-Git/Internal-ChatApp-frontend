@@ -23,7 +23,6 @@ import {
   Image as ImageIcon,
   Video,
   Search,
-  MoreVertical,
   UserPlus,
   PhoneCall,
   Paperclip,
@@ -42,6 +41,7 @@ import WebRTCCall from '../components/WebRTCCall'
 import GroupCallUI from '../components/GroupCallUI'
 import JitsiGroupCall from '../components/JitsiGroupCall'
 import IncomingJitsiCall from '../components/IncomingJitsiCall'
+import EmojiPicker from 'emoji-picker-react'
 
 const UserDashboard = () => {
   const { user, logout } = useAuth()
@@ -84,6 +84,7 @@ const UserDashboard = () => {
   const [selectedFile, setSelectedFile] = useState(null)
   const [filePreview, setFilePreview] = useState(null)
   const [showFileOptions, setShowFileOptions] = useState(false)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState({})
   const [downloadedMap, setDownloadedMap] = useState(() => {
     try {
@@ -1614,11 +1615,14 @@ const UserDashboard = () => {
     }
   }
 
-  // Close file options and message dropdowns when clicking outside
+  // Close file options, emoji picker and message dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (showFileOptions && !event.target.closest('.file-options-container')) {
         setShowFileOptions(false)
+      }
+      if (showEmojiPicker && !event.target.closest('.emoji-picker-container')) {
+        setShowEmojiPicker(false)
       }
       if (messageDropdown && !event.target.closest('.message-dropdown-container')) {
         setMessageDropdown(null)
@@ -1629,7 +1633,7 @@ const UserDashboard = () => {
     return () => {
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [showFileOptions, messageDropdown])
+  }, [showFileOptions, showEmojiPicker, messageDropdown])
 
   const sendMessage = async (e) => {
     e.preventDefault()
@@ -2788,7 +2792,6 @@ const UserDashboard = () => {
                       }} />
                     </>
                   )}
-                  <MoreVertical className="w-5 h-5 text-gray-600 cursor-pointer hover:text-gray-800" />
                 </div>
               </div>
 
@@ -3460,6 +3463,20 @@ const UserDashboard = () => {
                       </div>
                     )}
 
+                    {/* Emoji Picker Modal */}
+                    {showEmojiPicker && (
+                      <div className="emoji-picker-container absolute bottom-16 right-4 z-50">
+                        <EmojiPicker
+                          onEmojiClick={(emojiData) => {
+                            setNewMessage(prev => prev + emojiData.emoji)
+                            setShowEmojiPicker(false)
+                          }}
+                          width={350}
+                          height={400}
+                        />
+                      </div>
+                    )}
+
                     {/* File Preview */}
                     {selectedFile && (
                       <div className="mb-3 p-3 bg-gray-100 rounded-lg">
@@ -3543,17 +3560,26 @@ const UserDashboard = () => {
                           rows={1}
                           className="w-full py-2 px-4 bg-gray-100 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-green-400 resize-none overflow-y-auto max-h-32"
                           style={{ minHeight: '40px', whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}
-                        />
-                      </div>
-                      
-                      <button
-                        type="submit"
-                        disabled={!newMessage.trim() && !selectedFile}
-                        className="bg-green-500 text-white p-2 rounded-full hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                      >
-                        <Send className="w-5 h-5" />
-                      </button>
-                    </form>
+                      />
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                      className="p-2 text-gray-500 hover:text-gray-700"
+                      title="Emoji"
+                    >
+                      <span className="text-2xl">😊</span>
+                    </button>
+                    
+                    <button
+                      type="submit"
+                      disabled={!newMessage.trim() && !selectedFile}
+                      className="bg-green-500 text-white p-2 rounded-full hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <Send className="w-5 h-5" />
+                    </button>
+                  </form>
                   </div>
                 )}
               </div>

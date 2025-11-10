@@ -31,10 +31,6 @@ export const SocketProvider = ({ children, user }) => {
       // Check notification permission first
       if (typeof Notification !== 'undefined' && Notification.permission === 'denied') {
         console.warn('⚠️ Notification permission is denied. Skipping push notification setup.');
-        toast('Enable notifications in browser settings to receive alerts when offline', {
-          icon: '🔔',
-          duration: 5000,
-        });
         return;
       }
       

@@ -47,6 +47,21 @@ const ManageDailyUpdates = () => {
     return `${year}-${month}-${day}`
   }
 
+  const formatDateForExport = (date) => {
+    try {
+      return date.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      })
+    } catch {
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const day = String(date.getDate()).padStart(2, '0')
+      return `${day}/${month}/${year}`
+    }
+  }
+
   // Get all users' updates for a specific date
   const getAllUsersUpdatesForDate = (date) => {
     const dateString = getLocalDateString(date)
@@ -282,36 +297,69 @@ const ManageDailyUpdates = () => {
     }
 
     try {
-      // Create CSV content
-      let csvContent = 'data:text/csv;charset=utf-8,'
-      
-      // Add headers
-      csvContent += 'Date,Day,Content,Character Count,Media Count,Created At,Updated At\n'
-      
-      // Add data rows
+      const referenceDate = selectedCalendarDate || new Date()
+      const exportYear = referenceDate.getFullYear()
+      const exportMonth = referenceDate.getMonth()
+      const daysInMonth = new Date(exportYear, exportMonth + 1, 0).getDate()
+      const userId = selectedUser._id || selectedUser.id
+
+      const updatesByDate = new Map()
       selectedUserUpdates.forEach(update => {
-        const date = new Date(update.date)
-        const dateStr = date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-        const dayStr = date.toLocaleDateString('en-US', { weekday: 'long' })
-        const content = `"${(update.content || '').replace(/"/g, '""')}"`
-        const charCount = update.content?.length || 0
-        const mediaCount = update.media?.length || 0
-        const createdAt = new Date(update.createdAt).toLocaleString()
-        const updatedAt = new Date(update.updatedAt).toLocaleString()
-        
-        csvContent += `"${dateStr}","${dayStr}",${content},${charCount},${mediaCount},"${createdAt}","${updatedAt}"\n`
+        const updateDate = new Date(update.date || update.createdAt)
+        if (
+          updateDate.getFullYear() !== exportYear ||
+          updateDate.getMonth() !== exportMonth
+        ) {
+          return
+        }
+
+        const dateKey = getLocalDateString(updateDate)
+        if (!updatesByDate.has(dateKey)) {
+          updatesByDate.set(dateKey, [])
+        }
+        updatesByDate.get(dateKey).push(update)
       })
 
-      // Create download link
+      let csvContent = 'data:text/csv;charset=utf-8,'
+      csvContent += 'Date,User Name,Content,Review\n'
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateObj = new Date(exportYear, exportMonth, day)
+        const dateKey = getLocalDateString(dateObj)
+        const dateStr = formatDateForExport(dateObj)
+        const updatesForDay = updatesByDate.get(dateKey) || []
+
+        let contentText = '--'
+
+        if (updatesForDay.length > 0) {
+          const contentPieces = updatesForDay.map(update => {
+            const content = (update.content || '').trim()
+            if (content) return content
+            if (update.media?.length) {
+              return `(Media attachments: ${update.media.length})`
+            }
+            return '(No content)'
+          }).filter(Boolean)
+
+          contentText = contentPieces.join(' | ') || '(No content)'
+        }
+
+        const safeContent = `"${contentText.replace(/"/g, '""')}"`
+        const safeName = `"${(selectedUser.name || 'Unknown User').replace(/"/g, '""')}"`
+
+        csvContent += `"${dateStr}",${safeName},${safeContent},""\n`
+      }
+
       const encodedUri = encodeURI(csvContent)
       const link = document.createElement('a')
       link.setAttribute('href', encodedUri)
-      link.setAttribute('download', `${selectedUser.name}_DailyUpdates_${new Date().toISOString().split('T')[0]}.csv`)
+      const referenceLabel = `${exportYear}-${String(exportMonth + 1).padStart(2, '0')}`
+      link.setAttribute('download', `${selectedUser.name}_DailyUpdates_${referenceLabel}.csv`)
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
       
-      toast.success(`Downloaded ${selectedUserUpdates.length} updates for ${selectedUser.name}`)
+      toast.success(`Monthly export ready for ${selectedUser.name}`)
     } catch (error) {
       console.error('Download error:', error)
       toast.error('Failed to download Excel file')
@@ -319,59 +367,104 @@ const ManageDailyUpdates = () => {
   }
 
   const downloadAllUsersMonthlyExcel = () => {
-    if (allUserUpdates.length === 0) {
-      toast.error('No updates to download')
+    if (users.length === 0) {
+      toast.error('No users available to export')
       return
     }
 
+    const referenceDate = selectedCalendarDate || new Date()
+    const exportYear = referenceDate.getFullYear()
+    const exportMonth = referenceDate.getMonth()
+    const daysInMonth = new Date(exportYear, exportMonth + 1, 0).getDate()
+
     try {
-      // Create CSV content
-      let csvContent = 'data:text/csv;charset=utf-8,'
-      
-      // Add headers
-      csvContent += 'User Name,User Email,Date,Day,Content,Character Count,Media Count,Created At\n'
-      
-      // Group updates by user
-      const updatesByUser = {}
+      // Build a map of updates grouped by userId and date for quick lookups
+      const updatesByUserAndDate = new Map()
       allUserUpdates.forEach(update => {
-        const userId = update.user?._id || update.user || update.userId
-        if (!updatesByUser[userId]) {
-          updatesByUser[userId] = []
+        const updateDate = new Date(update.date || update.createdAt)
+        if (
+          updateDate.getFullYear() !== exportYear ||
+          updateDate.getMonth() !== exportMonth
+        ) {
+          return
         }
-        updatesByUser[userId].push(update)
+
+        const userId = update.user?._id || update.user || update.userId
+        const dateKey = getLocalDateString(updateDate)
+
+        if (!updatesByUserAndDate.has(userId)) {
+          updatesByUserAndDate.set(userId, new Map())
+        }
+        const userDateMap = updatesByUserAndDate.get(userId)
+
+        if (!userDateMap.has(dateKey)) {
+          userDateMap.set(dateKey, [])
+        }
+        userDateMap.get(dateKey).push(update)
       })
 
-      // Add data rows
-      Object.keys(updatesByUser).forEach(userId => {
-        const userUpdates = updatesByUser[userId]
-        const userData = users.find(u => (u._id || u.id) === userId)
-        const userName = userData?.name || 'Unknown User'
-        const userEmail = userData?.email || 'N/A'
-        
-        userUpdates.forEach(update => {
-          const date = new Date(update.date || update.createdAt)
-          const dateStr = date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-          const dayStr = date.toLocaleDateString('en-US', { weekday: 'long' })
-          const content = `"${(update.content || '').replace(/"/g, '""')}"`
-          const charCount = update.content?.length || 0
-          const mediaCount = update.media?.length || 0
-          const createdAt = new Date(update.createdAt).toLocaleString()
-          
-          csvContent += `"${userName}","${userEmail}","${dateStr}","${dayStr}",${content},${charCount},${mediaCount},"${createdAt}"\n`
-        })
+      const csvRows = []
+      csvRows.push('Date,User Name,Content,Review\n')
+
+      const monthLabel = `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, '0')}`
+
+      const sortedUsers = [...users].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '')
+      )
+
+      sortedUsers.forEach(userData => {
+        const userId = userData._id || userData.id
+        const userName = userData.name || 'Unknown User'
+        const safeUserName = `"${userName.replace(/"/g, '""')}"`
+
+        for (let day = 1; day <= daysInMonth; day++) {
+          const dateObj = new Date(exportYear, exportMonth, day)
+          const dateKey = getLocalDateString(dateObj)
+          const dateDisplay = formatDateForExport(dateObj)
+
+          let contentText = '--'
+          const userDateMap = updatesByUserAndDate.get(userId)
+          const updatesForDay = userDateMap?.get(dateKey) || []
+
+          if (updatesForDay.length > 0) {
+            const contentPieces = updatesForDay.map(update => {
+              const content = (update.content || '').trim()
+              if (content) return content
+              if (update.media?.length) {
+                return `(Media attachments: ${update.media.length})`
+              }
+              return '(No content)'
+            }).filter(Boolean)
+
+            contentText = contentPieces.join(' | ') || '(No content)'
+          }
+
+          const safeDate = `"${dateDisplay}"`
+          const safeContent = `"${contentText.replace(/"/g, '""')}"`
+
+          csvRows.push(`${safeDate},${safeUserName},${safeContent},""\n`)
+        }
+
+        csvRows.push('\n')
       })
 
-      // Create download link
-      const encodedUri = encodeURI(csvContent)
+      const csvString = csvRows.join('')
+      const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+
+      const sanitizedMonthLabel = monthLabel.replace(/\s+/g, '_')
       const link = document.createElement('a')
-      link.setAttribute('href', encodedUri)
-      const monthYear = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long' })
-      link.setAttribute('download', `AllUsers_DailyUpdates_${monthYear}_${new Date().toISOString().split('T')[0]}.csv`)
+      link.href = url
+      link.setAttribute(
+        'download',
+        `AllUsers_DailyUpdates_${sanitizedMonthLabel}_${getLocalDateString(new Date())}.csv`
+      )
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)
-      
-      toast.success(`Downloaded ${allUserUpdates.length} updates from ${Object.keys(updatesByUser).length} users`)
+      URL.revokeObjectURL(url)
+
+      toast.success(`Monthly export ready for ${monthLabel}`)
     } catch (error) {
       console.error('Download error:', error)
       toast.error('Failed to download Excel file')
@@ -398,46 +491,49 @@ const ManageDailyUpdates = () => {
       const result = getColorForDay(dateStr)
       const hasUpdate = result.color !== ''
 
+      let statusClass = 'bg-white text-gray-600 border border-gray-200'
+      if (hasUpdate) {
+        if (result.color.includes('green')) {
+          statusClass = 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+        } else if (result.color.includes('blue')) {
+          statusClass = 'bg-sky-100 text-sky-700 border border-sky-200'
+        } else {
+          statusClass = 'bg-violet-100 text-violet-700 border border-violet-200'
+        }
+      } else if (isToday) {
+        statusClass = 'bg-gray-900 text-white border border-gray-900'
+      }
+
       days.push(
         <button
           key={day}
           onClick={() => handleDateClick(dateStr)}
           disabled={!hasUpdate}
-          className={`
-            relative p-2 rounded-xl text-center transition-all duration-200 text-sm font-semibold
-            ${hasUpdate
-              ? `${result.color} text-white shadow-lg cursor-pointer hover:scale-110 hover:shadow-xl transform`
-              : isToday
-              ? 'bg-gradient-to-br from-primary-100 to-primary-200 text-primary-900 font-bold border-2 border-primary-500 cursor-default shadow-md'
-              : 'bg-gray-100/50 text-gray-600 cursor-default hover:bg-gray-200/50'
-            }
-          `}
+          className={`relative flex h-10 w-10 items-center justify-center rounded-md text-sm font-semibold transition-colors ${statusClass} ${hasUpdate ? 'hover:border-gray-400' : ''}`}
         >
           <span>{day}</span>
           {hasUpdate && (
-            <div className="absolute top-1 right-1">
-              <div className="w-2 h-2 bg-white rounded-full shadow-lg animate-pulse"></div>
-            </div>
+            <div className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-white/80"></div>
           )}
         </button>
       )
     }
 
     return (
-      <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg p-5 border border-white/20 mb-5">
-        <div className="flex items-center justify-between mb-5">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 mb-5">
+        <div className="flex items-center justify-between mb-4">
           <button
             onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))}
-            className="p-2 hover:bg-primary-50 rounded-xl transition-all duration-200 transform hover:scale-110"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
           >
             <ChevronLeft className="w-5 h-5 text-gray-700" />
           </button>
-          <h3 className="text-lg font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+          <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
             {monthYear}
           </h3>
           <button
             onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))}
-            className="p-2 hover:bg-primary-50 rounded-xl transition-all duration-200 transform hover:scale-110"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
           >
             <ChevronRight className="w-5 h-5 text-gray-700" />
           </button>
@@ -445,31 +541,31 @@ const ManageDailyUpdates = () => {
 
         <div className="grid grid-cols-7 gap-2 text-center mb-3">
           {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, idx) => (
-            <div key={idx} className="text-xs font-bold text-gray-600 py-2">
+            <div key={idx} className="text-xs font-medium text-gray-500 py-2 uppercase tracking-wide">
               {day}
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-7 gap-2">
+        <div className="grid grid-cols-7 gap-2 place-items-center">
           {days}
         </div>
 
-        {/* Premium Legend */}
-        <div className="mt-5 pt-4 border-t border-gray-200/50">
-          <div className="flex gap-4 text-xs justify-center">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-lg bg-gradient-to-br from-purple-400 to-purple-600 shadow-md"></div>
-              <span className="text-gray-700 font-semibold">Short</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-lg bg-gradient-to-br from-blue-400 to-blue-600 shadow-md"></div>
-              <span className="text-gray-700 font-semibold">Medium</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded-lg bg-gradient-to-br from-green-400 to-green-600 shadow-md"></div>
-              <span className="text-gray-700 font-semibold">Long</span>
-            </div>
+        {/* Legend */}
+        <div className="mt-4 pt-4 border-t border-gray-200">
+          <div className="flex gap-4 text-xs justify-center text-gray-500">
+            <span className="flex items-center gap-2">
+              <span className="h-4 w-4 rounded-md border border-violet-200 bg-violet-100"></span>
+              Short
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-4 w-4 rounded-md border border-sky-200 bg-sky-100"></span>
+              Medium
+            </span>
+            <span className="flex items-center gap-2">
+              <span className="h-4 w-4 rounded-md border border-emerald-200 bg-emerald-100"></span>
+              Long
+            </span>
           </div>
         </div>
       </div>
@@ -477,94 +573,85 @@ const ManageDailyUpdates = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/40">
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        {/* Premium Header */}
-        <div className="bg-white/80 backdrop-blur-xl shadow-lg rounded-2xl p-6 mb-6 border border-white/20">
-          <div className="flex items-center justify-between">
+    <div className="min-h-screen bg-gray-100">
+      <div className="max-w-7xl mx-auto px-4 py-8">
+        {/* Header */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6 mb-8">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-4">
               <button
                 onClick={() => navigate('/dashboard')}
-                className="flex items-center justify-center w-12 h-12 text-gray-600 hover:text-primary-600 hover:bg-primary-50 rounded-xl transition-all duration-200 transform hover:scale-110"
+                className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
               >
-                <ArrowLeft className="w-6 h-6" />
+                <ArrowLeft className="w-5 h-5" />
               </button>
               <div>
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                <h1 className="text-2xl font-semibold text-gray-900">
                   Manage Daily Updates
                 </h1>
-                <p className="text-sm text-gray-600 font-medium mt-1">Monitor and track user daily updates</p>
+                <p className="text-sm text-gray-500 mt-1">Monitor and review daily updates across your team.</p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="group relative overflow-hidden bg-gradient-to-br from-blue-50 to-blue-100/50 px-5 py-3 rounded-xl border border-blue-200/50 shadow-md hover:shadow-lg transition-all duration-200">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-lg">
-                    <TrendingUp className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-semibold text-gray-600">Total Updates</p>
-                    <p className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-blue-500 bg-clip-text text-transparent">
-                      {allUserUpdates.length}
-                    </p>
-                  </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-blue-100 text-blue-600">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-500">Total Updates</p>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {allUserUpdates.length}
+                  </p>
                 </div>
               </div>
-              <div className="group relative overflow-hidden bg-gradient-to-br from-purple-50 to-purple-100/50 px-5 py-3 rounded-xl border border-purple-200/50 shadow-md hover:shadow-lg transition-all duration-200">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow-lg">
-                    <Users className="w-5 h-5 text-white" />
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs font-semibold text-gray-600">Active Users</p>
-                    <p className="text-2xl font-bold bg-gradient-to-r from-purple-600 to-purple-500 bg-clip-text text-transparent">
-                      {users.filter(u => getUserUpdateCount(u._id || u.id) > 0).length}
-                    </p>
-                  </div>
+              <div className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-indigo-100 text-indigo-600">
+                  <Users className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-gray-500">Active Users</p>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {users.filter(u => getUserUpdateCount(u._id || u.id) > 0).length}
+                  </p>
                 </div>
               </div>
-              
+
               {/* Download All Users Button */}
               <button
                 onClick={downloadAllUsersMonthlyExcel}
                 disabled={allUserUpdates.length === 0}
-                className="group relative overflow-hidden bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 px-5 py-3 rounded-xl shadow-lg hover:shadow-green-500/50 transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                 title="Download all users' monthly updates"
               >
-                <div className="flex items-center gap-2">
-                  <Download className="w-5 h-5 text-white" />
-                  <div className="text-left">
-                    <p className="text-xs font-semibold text-white/90">Export All</p>
-                    <p className="text-sm font-bold text-white">Download Excel</p>
-                  </div>
-                </div>
+                <Download className="w-4 h-4" />
+                Download Excel
               </button>
             </div>
           </div>
         </div>
 
-        {/* Premium Two Panel Layout */}
+        {/* Content */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Left Panel - Users List */}
           <div className="lg:col-span-1">
-            <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg border border-white/20 sticky top-6 overflow-hidden">
-              <div className="bg-gradient-to-r from-primary-500 to-primary-600 p-5">
-                <h2 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
-                  <Users className="w-5 h-5" />
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm sticky top-6 overflow-hidden">
+              <div className="border-b border-gray-200 p-5">
+                <h2 className="text-base font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-gray-500" />
                   Users ({users.length})
                 </h2>
-                
-                {/* Premium Search */}
+
+                {/* Search */}
                 <div className="relative">
-                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-                    <Search className="text-white/70 w-5 h-5" />
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+                    <Search className="w-4 h-4" />
                   </div>
                   <input
                     type="text"
                     placeholder="Search users..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-3 text-sm bg-white/20 backdrop-blur border-2 border-white/30 rounded-xl focus:outline-none focus:ring-2 focus:ring-white/50 focus:border-white/50 text-white placeholder:text-white/70 font-medium transition-all duration-200"
+                    className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm text-gray-700 placeholder:text-gray-400 focus:border-gray-400 focus:outline-none focus:ring-1 focus:ring-gray-400"
                   />
                 </div>
               </div>
@@ -573,27 +660,27 @@ const ManageDailyUpdates = () => {
               <div className="p-4">
                 <button
                   onClick={() => setShowAllUsersCalendar(!showAllUsersCalendar)}
-                  className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white py-3.5 px-4 rounded-xl font-semibold transition-all duration-200 flex items-center justify-center gap-2 shadow-lg hover:shadow-purple-500/50 transform hover:scale-105"
+                  className="w-full rounded-lg border border-gray-200 bg-white py-2.5 px-4 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <Calendar className="w-5 h-5" />
                   {showAllUsersCalendar ? 'View Users List' : 'View Calendar'}
                 </button>
               </div>
 
-              {/* Premium Users List */}
+              {/* Users List */}
               <div className="max-h-[calc(100vh-320px)] overflow-y-auto px-4 pb-4 space-y-2 custom-scrollbar">
                 {loading ? (
                   <div className="text-center py-8">
                     <div className="relative inline-block">
-                      <div className="animate-spin rounded-full h-10 w-10 border-4 border-primary-200"></div>
-                      <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-primary-600 absolute top-0 left-0"></div>
+                      <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200"></div>
+                      <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-gray-500 absolute top-0 left-0"></div>
                     </div>
                     <p className="mt-3 text-sm text-gray-600 font-medium">Loading users...</p>
                   </div>
                 ) : filteredUsers.length === 0 ? (
-                  <div className="text-center py-8 bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-xl">
-                    <div className="p-3 bg-gray-200 rounded-xl w-fit mx-auto mb-3">
-                      <Users className="w-10 h-10 text-gray-400" />
+                  <div className="text-center py-8 bg-gray-50 border border-dashed border-gray-200 rounded-lg">
+                    <div className="p-3 bg-white border border-gray-200 rounded-lg w-fit mx-auto mb-3">
+                      <Users className="w-8 h-8 text-gray-400" />
                     </div>
                     <p className="text-sm font-semibold text-gray-700">No users found</p>
                     <p className="text-xs text-gray-500 mt-1">Try adjusting your search</p>
@@ -608,10 +695,10 @@ const ManageDailyUpdates = () => {
                       <div
                         key={userId}
                         onClick={() => setSelectedUser(u)}
-                        className={`group relative p-3 rounded-xl cursor-pointer transition-all duration-200 ${
+                        className={`group relative p-3 rounded-lg border cursor-pointer transition-colors ${
                           isSelected
-                            ? 'bg-gradient-to-r from-primary-500 to-primary-600 shadow-lg shadow-primary-500/50 scale-105'
-                            : 'bg-white/70 backdrop-blur hover:bg-white hover:shadow-md'
+                            ? 'border-gray-900 bg-gray-900/5'
+                            : 'border-transparent bg-white hover:border-gray-200'
                         }`}
                       >
                         <div className="flex items-center gap-3">
@@ -620,36 +707,30 @@ const ManageDailyUpdates = () => {
                               <img
                                 src={`${API_ORIGIN}${u.profileImage}`}
                                 alt={u.name}
-                                className={`w-12 h-12 rounded-xl object-cover ring-2 ${
-                                  isSelected ? 'ring-white/50' : 'ring-primary-100'
-                                } transition-all duration-200`}
+                                className="w-10 h-10 rounded-lg object-cover border border-gray-200"
                               />
                             ) : (
-                              <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-md ${
-                                isSelected ? 'bg-white/20 ring-2 ring-white/50' : 'bg-gradient-to-br from-primary-400 to-primary-600'
-                              }`}>
-                                <span className="text-white font-bold text-lg">
+                              <div className="w-10 h-10 rounded-lg bg-gray-200 flex items-center justify-center text-gray-600 font-semibold">
+                                <span>
                                   {u.name?.charAt(0).toUpperCase()}
                                 </span>
                               </div>
                             )}
                             {updateCount > 0 && (
-                              <div className={`absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shadow-lg ${
-                                isSelected ? 'bg-white text-primary-600' : 'bg-gradient-to-br from-green-500 to-green-600 text-white'
-                              }`}>
+                              <div className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full border border-white bg-gray-900 text-[10px] font-semibold text-white shadow-sm">
                                 {updateCount}
                               </div>
                             )}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-bold truncate ${isSelected ? 'text-white' : 'text-gray-800'}`}>
+                            <p className={`text-sm font-medium truncate ${isSelected ? 'text-gray-900' : 'text-gray-800'}`}>
                               {u.name}
                             </p>
-                            <p className={`text-xs font-medium truncate ${isSelected ? 'text-white/80' : 'text-gray-500'}`}>
+                            <p className="text-xs text-gray-500 truncate">
                               {u.email}
                             </p>
                             {updateCount > 0 && (
-                              <div className={`text-xs font-semibold mt-1 ${isSelected ? 'text-white/90' : 'text-primary-600'}`}>
+                              <div className="text-xs font-medium text-gray-500 mt-1">
                                 {updateCount} update{updateCount !== 1 ? 's' : ''}
                               </div>
                             )}
@@ -666,43 +747,42 @@ const ManageDailyUpdates = () => {
           {/* Right Panel - Selected User Updates */}
           <div className="lg:col-span-3">
             {loading ? (
-              <div className="bg-white rounded-lg shadow p-8 text-center border border-gray-200">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-                <p className="text-gray-500 text-sm mt-3">Loading...</p>
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-8 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-2 border-gray-200 border-t-gray-500 mx-auto"></div>
+                <p className="text-gray-500 text-sm mt-3">Loading updates…</p>
               </div>
             ) : showAllUsersCalendar ? (
               /* Calendar and All Users Updates View */
               <div className="space-y-4">
                 {/* Calendar Header */}
-                <div className="bg-white rounded-lg shadow p-4 border border-gray-200">
-                  <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2 mb-3">
-                    <Calendar className="w-5 h-5 text-purple-600" />
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                      <Calendar className="w-5 h-5 text-gray-500" />
                     All Users Calendar
-                  </h3>
-                  
-                  {/* Calendar Navigation */}
-                  <div className="flex items-center justify-between mb-3">
+                    </h3>
+                    {/* Calendar Navigation */}
                     <button
                       onClick={() => setSelectedCalendarDate(new Date(selectedCalendarDate.getFullYear(), selectedCalendarDate.getMonth() - 1, selectedCalendarDate.getDate()))}
-                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <span className="text-lg font-medium text-gray-800">
+                    <span className="text-sm font-medium text-gray-600 uppercase tracking-wide">
                       {selectedCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
                     </span>
                     <button
                       onClick={() => setSelectedCalendarDate(new Date(selectedCalendarDate.getFullYear(), selectedCalendarDate.getMonth() + 1, selectedCalendarDate.getDate()))}
-                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
 
                   {/* Calendar Grid */}
-                  <div className="grid grid-cols-7 gap-1 text-sm">
+                  <div className="grid grid-cols-7 gap-2 text-sm">
                     {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(day => (
-                      <div key={day} className="text-center text-gray-500 py-2 font-medium">
+                      <div key={day} className="text-center text-gray-500 py-2 uppercase text-xs tracking-wide">
                         {day}
                       </div>
                     ))}
@@ -719,22 +799,17 @@ const ManageDailyUpdates = () => {
                         <button
                           key={day}
                           onClick={() => setSelectedCalendarDate(date)}
-                          className={`p-2 rounded-lg text-sm transition-all ${
+                          className={`h-10 w-10 rounded-md text-sm font-medium transition-colors ${
                             isSelected
-                              ? 'bg-purple-500 text-white font-bold'
+                              ? 'bg-gray-900 text-white'
                               : isToday
-                              ? 'bg-blue-100 text-blue-600 font-semibold'
+                              ? 'border border-gray-900 text-gray-900'
                               : updatesForDate.length > 0
-                              ? 'bg-green-100 text-green-600 hover:bg-green-200'
-                              : 'hover:bg-gray-100'
+                              ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : 'border border-gray-200 bg-white hover:bg-gray-100'
                           }`}
                         >
-                          <div className="flex flex-col items-center">
-                            <span>{day}</span>
-                            {updatesForDate.length > 0 && (
-                              <span className="text-xs">({updatesForDate.length})</span>
-                            )}
-                          </div>
+                          <span>{day}</span>
                         </button>
                       )
                     })}
@@ -742,10 +817,10 @@ const ManageDailyUpdates = () => {
                 </div>
 
                 {/* Updates for Selected Date */}
-                <div className="bg-white rounded-lg shadow border border-gray-200">
-                  <div className="p-4 border-b border-gray-200">
-                    <h4 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-                      <Calendar className="w-5 h-5 text-green-600" />
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm">
+                  <div className="p-5 border-b border-gray-200">
+                    <h4 className="text-base font-semibold text-gray-900 flex items-center gap-2">
+                      <Calendar className="w-5 h-5 text-gray-500" />
                       {selectedCalendarDate.toLocaleDateString('en-US', { 
                         weekday: 'long',
                         month: 'long', 
@@ -755,22 +830,22 @@ const ManageDailyUpdates = () => {
                     </h4>
                   </div>
                   
-                  <div className="p-4">
+                  <div className="p-5">
                     {(() => {
                       const updatesForSelectedDate = getAllUsersUpdatesForDate(selectedCalendarDate)
                       
                       if (updatesForSelectedDate.length === 0) {
                         return (
-                          <div className="text-center py-8 text-gray-500">
-                            <Calendar className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                            <p className="text-lg font-medium">No updates for this date</p>
-                            <p className="text-sm">Users haven't created any updates yet</p>
+                          <div className="text-center py-8 text-gray-500 border border-dashed border-gray-200 rounded-lg">
+                            <Calendar className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                            <p className="text-sm font-medium">No updates for this date</p>
+                            <p className="text-xs text-gray-400">Users haven’t created any updates yet</p>
                           </div>
                         )
                       }
 
                       return (
-                        <div className="space-y-4 max-h-[500px] overflow-y-auto">
+                        <div className="space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar">
                           {updatesForSelectedDate.map((update, index) => {
                             const user = users.find(u => (u._id || u.id) === (update.userId || update.user))
                             return (
@@ -832,48 +907,48 @@ const ManageDailyUpdates = () => {
                 </div>
               </div>
             ) : !selectedUser ? (
-              <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg p-12 text-center border border-white/20">
-                <div className="p-6 bg-gradient-to-br from-gray-100 to-gray-200/50 rounded-2xl w-fit mx-auto mb-6">
-                  <Users className="w-20 h-20 text-gray-400" />
+              <div className="bg-white border border-dashed border-gray-200 rounded-xl p-12 text-center shadow-sm">
+                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                  <Users className="w-8 h-8" />
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">Select a User</h3>
-                <p className="text-sm text-gray-600 font-medium">Choose a user from the left panel to view their daily updates</p>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Select a user</h3>
+                <p className="text-sm text-gray-500">Choose a user from the list to review their daily updates.</p>
               </div>
             ) : selectedUserUpdates.length === 0 ? (
-              <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg p-12 text-center border border-white/20">
-                <div className="p-6 bg-gradient-to-br from-blue-100 to-blue-200/50 rounded-2xl w-fit mx-auto mb-6">
-                  <Calendar className="w-20 h-20 text-blue-400" />
+              <div className="bg-white border border-dashed border-gray-200 rounded-xl p-12 text-center shadow-sm">
+                <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 text-gray-500">
+                  <Calendar className="w-8 h-8" />
                 </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">{selectedUser.name}</h3>
-                <p className="text-sm text-gray-600 font-medium">No updates available yet</p>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">{selectedUser.name}</h3>
+                <p className="text-sm text-gray-500">No updates available for the selected period.</p>
               </div>
             ) : (
               <div className="space-y-5">
                 {/* Calendar */}
                 {renderCalendar()}
-                {/* Premium User Header */}
-                <div className="bg-white/80 backdrop-blur-xl rounded-2xl shadow-lg p-6 border border-white/20">
+                {/* User Header */}
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
                       {selectedUser.profileImage ? (
                         <img
                           src={`${API_ORIGIN}${selectedUser.profileImage}`}
                           alt={selectedUser.name}
-                          className="w-16 h-16 rounded-2xl object-cover ring-4 ring-primary-100 shadow-lg"
+                          className="w-14 h-14 rounded-lg object-cover border border-gray-200"
                         />
                       ) : (
-                        <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center ring-4 ring-primary-100 shadow-lg">
-                          <span className="text-white font-bold text-2xl">
+                        <div className="w-14 h-14 rounded-lg bg-gray-200 flex items-center justify-center text-gray-600 font-semibold">
+                          <span>
                             {selectedUser.name?.charAt(0).toUpperCase()}
                           </span>
                         </div>
                       )}
                       <div className="flex-1">
-                        <h2 className="text-xl font-bold text-gray-900">{selectedUser.name}</h2>
-                        <p className="text-sm text-gray-600 font-medium">{selectedUser.email}</p>
-                        <div className="mt-2 inline-flex items-center gap-2 bg-gradient-to-r from-primary-100 to-primary-200 px-3 py-1 rounded-lg">
-                          <Calendar className="w-4 h-4 text-primary-600" />
-                          <span className="text-sm text-primary-900 font-bold">
+                        <h2 className="text-lg font-semibold text-gray-900">{selectedUser.name}</h2>
+                        <p className="text-sm text-gray-500">{selectedUser.email}</p>
+                        <div className="mt-2 inline-flex items-center gap-2 rounded-md bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+                          <Calendar className="w-4 h-4 text-gray-500" />
+                          <span>
                             {selectedUserUpdates.length} update{selectedUserUpdates.length !== 1 ? 's' : ''}
                           </span>
                         </div>
@@ -885,20 +960,20 @@ const ManageDailyUpdates = () => {
                       <button
                         onClick={downloadIndividualUserExcel}
                         disabled={selectedUserUpdates.length === 0}
-                        className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white rounded-xl font-semibold shadow-lg hover:shadow-green-500/50 transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                         title={`Download ${selectedUser.name}'s updates`}
                       >
-                        <Download className="w-5 h-5" />
+                        <Download className="w-4 h-4" />
                         <span>Download Excel</span>
                       </button>
 
-                      {/* Premium View Toggle */}
-                      <div className="flex items-center rounded-xl border border-gray-200 overflow-hidden bg-white/50 backdrop-blur shadow-sm">
+                      {/* View Toggle */}
+                      <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
                         <button
                           onClick={() => setViewMode('grid')}
-                          className={`px-4 py-2.5 text-sm font-medium transition-all duration-200 ${
+                          className={`px-4 py-2 text-sm font-medium transition-colors ${
                             viewMode === 'grid'
-                              ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md'
+                              ? 'bg-gray-900 text-white'
                               : 'bg-transparent text-gray-600 hover:bg-gray-50'
                           }`}
                           title="Grid View"
@@ -907,9 +982,9 @@ const ManageDailyUpdates = () => {
                         </button>
                         <button
                           onClick={() => setViewMode('list')}
-                          className={`px-4 py-2.5 text-sm font-medium transition-all duration-200 ${
+                          className={`px-4 py-2 text-sm font-medium transition-colors ${
                             viewMode === 'list'
-                              ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-md'
+                              ? 'bg-gray-900 text-white'
                               : 'bg-transparent text-gray-600 hover:bg-gray-50'
                           }`}
                           title="List View"
@@ -921,181 +996,117 @@ const ManageDailyUpdates = () => {
                   </div>
                 </div>
 
-                {/* Premium Updates Grid or List */}
+                {/* Updates Grid or List */}
                 {viewMode === 'grid' ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-                  {selectedUserUpdates.map(update => {
-                    const colorGradient = getColorForUpdate(update.content.length)
-                    return (
-                      <div
-                        key={update._id}
-                        className={`group relative bg-gradient-to-br ${colorGradient} p-5 rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 border border-white/20`}
-                      >
-                        {/* Date Header */}
-                        <div className="bg-white/30 backdrop-blur-md rounded-xl p-3 mb-4 shadow-md">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Calendar className="w-4 h-4 text-white" />
-                              <span className="text-white font-bold text-sm">
-                                {new Date(update.date).toLocaleDateString('en-US', { 
-                                  month: 'short', 
-                                  day: 'numeric',
-                                  year: 'numeric'
-                                })}
-                              </span>
-                            </div>
-                            <span className="text-white/90 text-xs font-medium flex items-center gap-1.5">
-                              <Clock className="w-3.5 h-3.5" />
-                              {new Date(update.updatedAt).toLocaleTimeString('en-US', { 
-                                hour: '2-digit', 
-                                minute: '2-digit' 
-                              })}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Content */}
-                        <p className="text-white text-sm leading-relaxed mb-4 line-clamp-4 font-medium">
-                          {update.content}
-                        </p>
-
-                        {/* Media Preview */}
-                        {update.media && update.media.length > 0 && (
-                          <div className="grid grid-cols-3 gap-2 mb-4">
-                            {update.media.slice(0, 3).map((media, idx) => {
-                              const isLastVisible = idx === 2 && update.media.length > 3
-                              const remainingCount = update.media.length - 3
-                              return (
-                                <div
-                                  key={`${update._id}-media-${idx}`}
-                                  className="relative rounded-xl overflow-hidden cursor-pointer transform hover:scale-105 transition-transform duration-200 shadow-md"
-                                  onClick={() => openMediaPreview(update.media, idx)}
-                                >
-                                  {media.type === 'image' ? (
-                                    <img
-                                      src={media.url}
-                                      alt={media.filename}
-                                      className="w-full h-20 object-cover"
-                                    />
-                                  ) : media.type === 'video' ? (
-                                    <div className="w-full h-20 bg-black/30 flex items-center justify-center backdrop-blur">
-                                      <Video className="w-6 h-6 text-white" />
-                                    </div>
-                                  ) : (
-                                    <div className="w-full h-20 bg-white/20 flex items-center justify-center backdrop-blur">
-                                      <File className="w-6 h-6 text-white" />
-                                    </div>
-                                  )}
-                                  {isLastVisible && (
-                                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                                      <span className="text-white font-bold text-xl">+{remainingCount}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-
-                        {/* Footer */}
-                        <div className="flex items-center justify-between pt-3 border-t border-white/30">
-                          <span className="text-white/80 text-xs font-semibold">
-                            {update.content.length} characters
-                          </span>
-                          <div className="w-2 h-2 bg-white rounded-full shadow-lg"></div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  </div>
-                ) : (
-                  /* List View - Compact */
-                  <div className="space-y-2">
-                    {selectedUserUpdates.map(update => {
-                      const colorGradient = getColorForUpdate(update.content.length)
+                    {selectedUserUpdates.map((update) => {
                       return (
                         <div
                           key={update._id}
-                          className={`bg-gradient-to-r ${colorGradient} p-3 rounded-lg shadow hover:shadow-md transition-all`}
+                          className="group relative rounded-xl border border-gray-200 bg-white p-5 shadow-sm transition-shadow hover:shadow-md"
                         >
-                          <div className="flex items-start gap-3">
-                            {/* Date Badge - Compact */}
-                            <div className="flex-shrink-0">
-                              <div className="bg-white/20 backdrop-blur-sm rounded-lg p-2 text-center min-w-[60px]">
-                                <div className="text-white font-bold text-lg">
-                                  {new Date(update.date).getDate()}
-                                </div>
-                                <div className="text-white/90 text-[10px] font-semibold uppercase">
-                                  {new Date(update.date).toLocaleDateString('en-US', { month: 'short' })}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Content */}
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-white font-bold text-sm">
-                                  {new Date(update.date).toLocaleDateString('en-US', { weekday: 'long' })}
-                                </span>
-                                <span className="text-white/80 text-[10px] flex items-center gap-1">
-                                  <Clock className="w-2.5 h-2.5" />
-                                  {new Date(update.updatedAt).toLocaleTimeString('en-US', { 
-                                    hour: '2-digit', 
-                                    minute: '2-digit' 
-                                  })}
-                                </span>
-                              </div>
-                              
-                              <p className="text-white/95 text-xs leading-relaxed mb-2 line-clamp-2">
-                                {update.content}
-                              </p>
-
-                              {/* Media in List View */}
-                              {update.media && update.media.length > 0 && (
-                                <div className="flex gap-1.5 mb-2">
-                                  {update.media.slice(0, 4).map((media, idx) => {
-                                    const isLastVisible = idx === 3 && update.media.length > 4
-                                    const remainingCount = update.media.length - 4
-                                    return (
-                                      <div
-                                        key={`${update._id}-media-${idx}`}
-                                        className="relative rounded overflow-hidden cursor-pointer hover:opacity-70 transition-opacity"
-                                        onClick={() => openMediaPreview(update.media, idx)}
-                                      >
-                                        {media.type === 'image' ? (
-                                          <img
-                                            src={media.url}
-                                            alt={media.filename}
-                                            className="w-12 h-12 object-cover"
-                                          />
-                                        ) : media.type === 'video' ? (
-                                          <div className="w-12 h-12 bg-transparent flex items-center justify-center">
-                                            <Video className="w-3 h-3 text-white" />
-                                          </div>
-                                        ) : (
-                                          <div className="w-12 h-12 bg-gray-600/10 flex items-center justify-center">
-                                            <File className="w-3 h-3 text-white" />
-                                          </div>
-                                        )}
-                                        {isLastVisible && (
-                                          <div className="absolute inset-0 bg-black/10 flex items-center justify-center">
-                                            <span className="text-white font-bold text-xs">+{remainingCount}</span>
-                                          </div>
-                                        )}
-                                      </div>
-                                    )
-                                  })}
-                                </div>
-                              )}
-
-                              <span className="text-white/70 text-[10px]">
-                                {update.content.length} chars
+                          <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+                              <Calendar className="w-4 h-4 text-gray-500" />
+                              <span>
+                                {new Date(update.date).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })}
                               </span>
                             </div>
+                            <span className="flex items-center gap-1.5 text-xs text-gray-500">
+                              <Clock className="w-3.5 h-3.5" />
+                              {new Date(update.updatedAt).toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
+                          </div>
+
+                          <p className="text-sm leading-relaxed text-gray-700 mb-4 line-clamp-4">
+                            {update.content || 'No content provided.'}
+                          </p>
+
+                          {update.media && update.media.length > 0 && (
+                            <div className="grid grid-cols-3 gap-2 mb-4">
+                              {update.media.slice(0, 3).map((media, idx) => {
+                                const isLastVisible = idx === 2 && update.media.length > 3
+                                const remainingCount = update.media.length - 3
+                                return (
+                                  <div
+                                    key={`${update._id}-media-${idx}`}
+                                    onClick={() => openMediaPreview(update.media, idx)}
+                                    className="relative overflow-hidden rounded-md border border-gray-200 bg-gray-50 cursor-pointer hover:border-gray-400 transition-colors"
+                                  >
+                                    {media.type === 'image' ? (
+                                      <img
+                                        src={media.url}
+                                        alt={media.filename}
+                                        className="h-20 w-full object-cover"
+                                      />
+                                    ) : media.type === 'video' ? (
+                                      <div className="flex h-20 w-full items-center justify-center text-gray-500">
+                                        <Video className="w-6 h-6" />
+                                      </div>
+                                    ) : (
+                                      <div className="flex h-20 w-full items-center justify-center text-gray-500">
+                                        <File className="w-6 h-6" />
+                                      </div>
+                                    )}
+                                    {isLastVisible && (
+                                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-sm font-semibold text-white">
+                                        +{remainingCount}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between border-t border-gray-200 pt-3 text-xs text-gray-500">
+                            <span>{update.content.length} characters</span>
+                            <span>{update.media?.length || 0} attachments</span>
                           </div>
                         </div>
                       )
                     })}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {selectedUserUpdates.map((update) => (
+                      <div
+                        key={update._id}
+                        className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900 mb-1">
+                              {new Date(update.date).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })}
+                            </p>
+                            <p className="text-xs text-gray-500 flex items-center gap-1 mb-2">
+                              <Clock className="w-3.5 h-3.5" />
+                              {new Date(update.updatedAt).toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </p>
+                            <p className="text-sm text-gray-700">
+                              {update.content || 'No content provided.'}
+                            </p>
+                          </div>
+                          <span className="text-xs px-2 py-1 rounded-full bg-gray-100 text-gray-600 border border-gray-200">
+                            {update.media?.length || 0} files
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1109,25 +1120,25 @@ const ManageDailyUpdates = () => {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="sticky top-0 bg-gradient-to-r from-blue-500 to-purple-500 p-6 flex items-center justify-between">
-              <div className="text-white">
-                <h3 className="text-2xl font-bold mb-1">
-                  {new Date(selectedDateUpdate.date).toLocaleDateString('en-US', { 
+            <div className="sticky top-0 border-b border-gray-200 bg-white px-6 py-4 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {new Date(selectedDateUpdate.date).toLocaleDateString('en-US', {
                     weekday: 'long',
-                    month: 'long', 
-                    day: 'numeric', 
-                    year: 'numeric' 
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
                   })}
                 </h3>
-                <p className="text-white/80 text-sm">
+                <p className="text-xs text-gray-500 mt-1">
                   Last updated: {new Date(selectedDateUpdate.updatedAt).toLocaleString()}
                 </p>
               </div>
               <button
                 onClick={closeDatePopup}
-                className="bg-white/20 hover:bg-white/30 text-white p-2 rounded-full transition-colors"
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 text-gray-500 hover:bg-gray-100 transition-colors"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -1188,14 +1199,14 @@ const ManageDailyUpdates = () => {
 
               {/* Stats */}
               <div className="grid grid-cols-2 gap-4">
-                <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                  <p className="text-xs font-semibold text-blue-600 mb-1">Character Count</p>
-                  <p className="text-2xl font-bold text-blue-700">{selectedDateUpdate.content.length}</p>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
+                  <p className="text-xs font-medium text-gray-500 mb-1">Character Count</p>
+                  <p className="text-lg font-semibold text-gray-900">{selectedDateUpdate.content.length}</p>
                 </div>
                 {selectedDateUpdate.media && (
-                  <div className="bg-purple-50 rounded-xl p-4 border border-purple-200">
-                    <p className="text-xs font-semibold text-purple-600 mb-1">Media Files</p>
-                    <p className="text-2xl font-bold text-purple-700">{selectedDateUpdate.media.length}</p>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-center">
+                    <p className="text-xs font-medium text-gray-500 mb-1">Media Files</p>
+                    <p className="text-lg font-semibold text-gray-900">{selectedDateUpdate.media.length}</p>
                   </div>
                 )}
               </div>
